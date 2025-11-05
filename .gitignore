@@ -1,6 +1,7 @@
 tmp/
 __pycache__/
 .cursor/
+.idea/
 logs/
 configs/
 mods/

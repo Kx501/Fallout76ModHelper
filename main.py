@@ -33,10 +33,13 @@ def load_config():
             "ini_mode": "sResourceArchive2List",
             "backup_extensions": [".json", ".ini"],
             "ini_backup_retention": 5,
-            "default_mod_directory": None,
+            "mod_archive_directory": None,
+            "default_install_method": "direct",
             "nexus_api": {
-                "api_key": "",
-                "mod_directory": ""
+                "api_key": ""
+            },
+            "special_mod_install_paths": {
+                "SFE": "."
             }
         }
         try:
@@ -63,11 +66,12 @@ def display_menu():
     print("=" * 50)
     print("1. 启动游戏")
     print("2. 安装 Mod")
-    print("3. 查看启用 Mod")
+    print("3. 查看 Mod 列表")
     print("4. 检查 Mod 更新")
     print("5. 更新 Mod 信息")
-    print("6. 修补 Fallout76Custom.ini")
-    print("7. 退出")
+    print("6. 更新 Mod 排序")
+    print("7. 修补 Fallout76Custom.ini")
+    print("0. 退出")
     print("=" * 50)
 
 
@@ -117,13 +121,13 @@ def install_mods():
     
     # 加载配置
     config = load_config()
-    default_mod_directory = config.get('default_mod_directory')
+    mod_archive_directory = config.get('mod_archive_directory')
     
     # 获取 mod 文件夹路径
     mod_folder = None
-    if default_mod_directory:
+    if mod_archive_directory:
         # 展开环境变量并检查路径
-        expanded_path = os.path.expandvars(default_mod_directory)
+        expanded_path = os.path.expandvars(mod_archive_directory)
         if os.path.exists(expanded_path) and os.path.isdir(expanded_path):
             mod_folder = expanded_path
             logger.info(f"使用默认 Mod 目录: {mod_folder}")
@@ -131,7 +135,7 @@ def install_mods():
             logger.warning(f"配置的默认 Mod 目录不存在: {expanded_path}")
     
     if not mod_folder:
-        print("请输入 Mod 文件夹路径（包含 ZIP 压缩包的文件夹）:")
+        print("\n请输入 Mod 文件夹路径（包含 ZIP 压缩包的文件夹）:")
         mod_folder = input("> ").strip().strip('"').strip("'")
         if not mod_folder:
             logger.error("路径不能为空")
@@ -163,13 +167,63 @@ def install_mods():
         paths['config_dir'],
         ini_manager,
         mod_registry=mod_registry,
-        backup_extensions=backup_extensions
+        backup_extensions=backup_extensions,
+        game_path=paths.get('game_path')
     )
     
     logger.info(f"开始安装 Mod，从文件夹: {mod_folder}")
     logger.info("=" * 50)
     
-    result = installer.install_mods_from_folder(mod_folder)
+    # 扫描文件夹，获取所有压缩包文件（完整路径）
+    archive_files = []
+    archive_names = []
+    for item in os.listdir(mod_folder):
+        item_path = os.path.join(mod_folder, item)
+        item_lower = item.lower()
+        if os.path.isfile(item_path) and (item_lower.endswith('.zip') or item_lower.endswith('.7z')):
+            archive_files.append(item_path)  # 完整路径，用于安装
+            archive_names.append(item)  # 文件名，用于显示和用户选择
+    
+    if not archive_files:
+        logger.info("=" * 50)
+        logger.warning("未找到压缩包文件")
+        return
+    
+    # 显示找到的模组列表
+    logger.info(f"找到 {len(archive_files)} 个压缩包文件:")
+    for idx, archive_name in enumerate(archive_names, 1):
+        logger.info(f"  {idx}. {archive_name}")
+    
+    logger.info("=" * 50)
+    
+    # 安装方式选择
+    default_method = config.get('default_install_method', 'direct')
+    logger.info(f"默认安装方式: {default_method} (direct=直接移动, copy=复制)\n")
+    logger.info("提示: 可在 Mod 注册表中手动修改安装方式，修改将在下次安装时生效")
+    print("\n是否手动选择安装方式? (y/N): ", end='')
+    print("")
+    manual_choice = input().strip().lower()
+    
+    user_choices = {}
+    if manual_choice == 'y':
+        # 手动选择每个模组的安装方式
+        logger.info("开始逐个选择安装方式...")
+        for archive_name in archive_names:
+            display_name = mod_registry.extract_mod_name_from_filename(archive_name) if mod_registry else archive_name
+            print(f"\n[{display_name}] 的安装方式:")
+            print("  1. 移动文件 (direct)")
+            print("  2. 复制文件 (copy)")
+            print(f"  默认: {default_method} (按 Enter)")
+            choice = input("\n请选择: ").strip()
+            
+            if choice == '1':
+                user_choices[archive_name] = 'direct'
+            elif choice == '2':
+                user_choices[archive_name] = 'copy'
+            # 如果选择为空或其他值，使用默认（不添加到user_choices中）
+    
+    logger.info("=" * 50)
+    result = installer.install_mods_from_folder(mod_folder, user_choices=user_choices, archive_files=archive_files)
     
     logger.info("=" * 50)
     logger.info(f"安装完成!")
@@ -182,22 +236,32 @@ def install_mods():
             logger.info(f"  - {mod_file}")
 
 
-def view_enabled_mods():
-    """查看已启用的 Mod"""
-    logger.info("查询启用的 Mod...\n")
+def view_mod_list():
+    """查看 Mod 列表（包括启用和未启用的）"""
+    logger.info("查询 Mod 列表...\n")
     
     # 初始化 Mod 注册表
     mod_registry = ModRegistry()
     
-    # 获取已启用的 mod 列表
-    enabled_mods = mod_registry.get_enabled_mods()
+    # 获取所有 mod（按 order 排序）
+    sorted_mods = mod_registry.get_mods_by_order(enabled_only=False)
     
-    if not enabled_mods:
-        logger.info("当前没有已启用的 Mod\n")
+    if not sorted_mods:
+        logger.info("当前没有已注册的 Mod\n")
         return
     
-    logger.info(f"已启用的 Mod ({len(enabled_mods)} 个):")
-    logger.info("=" * 50)
+    # 分离启用和未启用的 mod
+    enabled_mods = []
+    disabled_mods = []
+    for mod_name, mod_info in sorted_mods:
+        if mod_info.get('enabled', False):
+            enabled_mods.append(mod_name)
+        else:
+            disabled_mods.append(mod_name)
+    
+    total_count = len(sorted_mods)
+    enabled_count = len(enabled_mods)
+    disabled_count = len(disabled_mods)
     
     # 加载配置以获取 INI 模式
     config = load_config()
@@ -206,6 +270,9 @@ def view_enabled_mods():
     # 初始化路径检测器和 INI 管理器以获取当前 INI 中的 mod
     path_detector = PathDetector()
     paths = path_detector.get_all_paths()
+
+    logger.info(f"Mod 列表 (共 {total_count} 个, 启用: {enabled_count} 个, 未启用: {disabled_count} 个):")
+    logger.info("=" * 50)
     
     if paths['config_dir']:
         backup_retention = config.get('ini_backup_retention', 5)
@@ -214,15 +281,28 @@ def view_enabled_mods():
     else:
         current_ini_mods = []
     
-    # 显示 mod 信息
-    for idx, mod_name in enumerate(enabled_mods, 1):
-        mod_info = mod_registry.get_mod_info(mod_name)
+    # 显示所有 mod 信息（按 order 排序）
+    idx = 1
+    for mod_name, mod_info in sorted_mods:
+        # 检查启用状态
+        is_enabled = mod_info.get('enabled', False)
         
         # 检查是否在 INI 中
         in_ini = mod_name in current_ini_mods
-        status = "✓ 已启用" if in_ini else "⚠ 配置丢失"
         
-        logger.info(f"{idx}. {mod_name}")
+        # 确定状态
+        if is_enabled:
+            if in_ini:
+                status = "✓ 已启用"
+            else:
+                status = "⚠ 已启用但配置丢失"
+        else:
+            status = "✗ 未启用"
+        
+        # 使用显示名称（别名或原始名称）
+        display_name = mod_registry.get_display_name(mod_name)
+        
+        logger.info(f"{idx}. {display_name}")
         logger.info(f"   状态: {status}")
         
         if mod_info:
@@ -237,6 +317,8 @@ def view_enabled_mods():
                     logger.info(f"   安装时间: {mod_info['install_date']}")
             if mod_info.get('source_file'):
                 logger.info(f"   来源文件: {mod_info['source_file']}")
+        
+        idx += 1
     
     logger.info("=" * 50)
     logger.info("Mod 列表查询完成\n")
@@ -245,13 +327,49 @@ def view_enabled_mods():
     if current_ini_mods:
         missing_mods = [mod for mod in enabled_mods if mod not in current_ini_mods]
         if missing_mods:
-            logger.warning(f"发现 {len(missing_mods)} 个 Mod 的配置丢失\n")
-            logger.warning("建议运行 '安装 Mod' 或 '修补 Fallout76Custom.ini' 功能来恢复")
-    else:
-        # 如果 INI 中没有 mod，说明所有已启用的 mod 都丢失了
-        if enabled_mods:
-            logger.warning("检测到所有已启用的 Mod 配置丢失\n")
-            logger.warning("建议运行 '修补 Fallout76Custom.ini' 功能来恢复")
+            logger.warning(f"发现 {len(missing_mods)} 个已启用的 Mod 配置丢失:")
+            logger.info("=" * 50)
+            for idx, mod_name in enumerate(missing_mods, 1):
+                mod_info = mod_registry.get_mod_info(mod_name)
+                version = mod_info.get('version', '未知') if mod_info else '未知'
+                display_name = mod_registry.get_display_name(mod_name)
+                logger.info(f"{idx}. {display_name} (版本: {version})")
+            logger.info("=" * 50)
+            
+            print("\n是否恢复这些 Mod 的配置? (Y/n): ", end='')
+            restore = input().strip()
+            
+            if restore and restore.lower() != 'y':
+                logger.info("已取消恢复操作\n")
+                return
+            
+            logger.info(f"开始恢复 {len(missing_mods)} 个丢失的 Mod 配置")
+            logger.info("=" * 50)
+            
+            restored_count = 0
+            failed_count = 0
+            
+            for mod_name in missing_mods:
+                # 检查 mod 是否在注册表中
+                mod_info = mod_registry.get_mod_info(mod_name)
+                if not mod_info:
+                    logger.warning(f"{mod_name} 不在注册表中，跳过")
+                    failed_count += 1
+                    continue
+                
+                # 添加 mod 到 INI 配置
+                if ini_manager.add_mod_to_list(mod_name, ini_mode):
+                    mod_registry.mark_mod_enabled(mod_name)
+                    restored_count += 1
+                    logger.info(f"成功恢复 {mod_name} 的配置")
+                else:
+                    logger.error(f"恢复 {mod_name} 的配置失败")
+                    failed_count += 1
+            
+            logger.info("=" * 50)
+            logger.info(f"恢复完成: 成功 {restored_count} 个, 失败 {failed_count} 个\n")
+
+
 
 
 def check_mod_updates():
@@ -298,54 +416,72 @@ def check_mod_updates():
         mod_name = mod_info['name']
         mod_id = mod_info.get('nexus_mod_id')
         current_version = mod_info.get('version')
+        source_file = mod_info.get('source_file')
         
         if not mod_id:
             continue
         
-        logger.info(f"检查更新: {mod_name}")
+        # 使用显示名称（别名或原始名称）
+        display_name = mod_registry.get_display_name(mod_name)
+        
+        logger.info(f"检查更新: {display_name}")
         logger.info(f"Mod ID: {mod_id}, 当前版本: {current_version or '未知'}")
         
+        # 从 source_file 提取模组名（使用更精确的提取方法）
+        mod_name_prefix = mod_registry.extract_mod_name_from_filename(source_file) if source_file else None
+        
         # 获取最新版本信息
-        latest_info = nexus_api.get_latest_version(mod_id)
+        latest_info = nexus_api.get_latest_version(mod_id, mod_name=mod_name_prefix)
         
         if not latest_info:
-            error_mods.append((mod_name, "无法获取更新信息"))
-            logger.warning(f"无法获取 {mod_name} 的更新信息")
+            error_mods.append((display_name, "无法获取更新信息"))
+            logger.warning(f"无法获取 {display_name} 的更新信息")
             continue
+        
+        # 检查是否找到匹配的文件
+        matched = latest_info.get('matched', True)
+        if not matched:
+            logger.warning(f"{display_name}: 未找到匹配的文件名，需要自行前往网页确认")
         
         latest_version = latest_info.get('version')
         
-        if not latest_version:
-            error_mods.append((mod_name, "无法识别版本号"))
-            logger.warning(f"无法识别 {mod_name} 的最新版本号")
+        # 如果找不到匹配的文件，不进行版本比较
+        if not matched:
+            # 仍然添加到 updated_mods 中，但标记为需要手动确认
+            updated_mods.append((display_name, current_version, "未知", latest_info))
             continue
         
-        logger.info(f"{mod_name} 当前版本: {current_version or '未知'}")
-        logger.info(f"{mod_name} 最新版本: {latest_version}")
+        if not latest_version:
+            error_mods.append((display_name, "无法识别版本号"))
+            logger.warning(f"无法识别 {display_name} 的最新版本号")
+            continue
+        
+        logger.info(f"{display_name} 当前版本: {current_version or '未知'}")
+        logger.info(f"{display_name} 最新版本: {latest_version}")
         
         # 比较版本
         if not current_version:
             # 如果没有当前版本号，假设有更新
-            updated_mods.append((mod_name, current_version, latest_version, latest_info))
-            logger.info(f"{mod_name} 发现新版本: {latest_version}")
+            updated_mods.append((display_name, current_version, latest_version, latest_info))
+            logger.info(f"{display_name} 发现新版本: {latest_version}")
         else:
             has_update = nexus_api.compare_versions(current_version, latest_version)
             if has_update:
-                updated_mods.append((mod_name, current_version, latest_version, latest_info))
-                logger.info(f"{mod_name} 发现新版本: {current_version} -> {latest_version}")
+                updated_mods.append((display_name, current_version, latest_version, latest_info))
+                logger.info(f"{display_name} 发现新版本: {current_version} -> {latest_version}")
             elif has_update is False:
-                no_update_mods.append((mod_name, current_version, latest_version))
-                logger.info(f"{mod_name} 已是最新版本")
+                no_update_mods.append((display_name, current_version, latest_version))
+                logger.info(f"{display_name} 已是最新版本")
             else:
                 # 无法比较版本（格式不同等）
                 if current_version != latest_version:
                     # 版本号字符串不同，可能是有更新
-                    updated_mods.append((mod_name, current_version, latest_version, latest_info))
-                    logger.info(f"{mod_name} 版本号不同（无法比较）")
+                    updated_mods.append((display_name, current_version, latest_version, latest_info))
+                    logger.info(f"{display_name} 版本号不同（无法比较）")
                     logger.info(f"当前: {current_version} -> 最新: {latest_version}")
                 else:
-                    no_update_mods.append((mod_name, current_version, latest_version))
-                    logger.info(f"{mod_name} 版本号相同: {current_version}")
+                    no_update_mods.append((display_name, current_version, latest_version))
+                    logger.info(f"{display_name} 版本号相同: {current_version}")
     
     logger.info("=" * 50)
     logger.info(f"检查完成: 发现 {len(updated_mods)} 个更新")
@@ -353,9 +489,9 @@ def check_mod_updates():
     
     if updated_mods:
         logger.info("可更新 Mod:")
-        for mod_name, old_version, new_version, latest_info in updated_mods:
+        for display_name, old_version, new_version, latest_info in updated_mods:
             mod_url = latest_info.get('mod_url', '')
-            logger.info(f"• {mod_name}: {old_version or '未知'} -> {new_version}")
+            logger.info(f"• {display_name}: {old_version or '未知'} -> {new_version}")
             if mod_url:
                 logger.info(f"|__{mod_url}")
     else:
@@ -466,6 +602,215 @@ def detect_mod_info():
     logger.info(f"更新: {updated_count} 个, 新发现: {new_count} 个")
 
 
+def reorder_mods():
+    """Mod 排序功能"""
+    logger.info("开始 Mod 排序功能...\n")
+    logger.info("=" * 50)
+    
+    # 初始化路径检测器
+    path_detector = PathDetector()
+    paths = path_detector.get_all_paths()
+    
+    if not paths['config_dir']:
+        logger.error("未找到配置目录")
+        logger.info("=" * 50)
+        return
+    
+    # 加载配置
+    config = load_config()
+    ini_mode = config.get('ini_mode', 'sResourceArchive2List')
+    backup_retention = config.get('ini_backup_retention', 5)
+    
+    # 初始化 Mod 注册表和 INI 管理器
+    mod_registry = ModRegistry()
+    ini_manager = IniManager(paths['config_dir'], backup_retention=backup_retention)
+    
+    # 获取已启用的 mod 列表
+    enabled_mods = mod_registry.get_enabled_mods()
+    
+    if not enabled_mods:
+        logger.info("当前没有已启用的 Mod，无需排序\n")
+        return
+    
+    # 获取当前 INI 中的 mod 列表
+    current_ini_mods = ini_manager.get_mod_list(ini_mode)
+    
+    # 检查是否有已启用的 mod 不在 INI 中
+    missing_in_ini = [mod for mod in enabled_mods if mod not in current_ini_mods]
+    if missing_in_ini:
+        logger.warning(f"发现 {len(missing_in_ini)} 个已启用的 Mod 不在 INI 中:")
+        for mod_name in missing_in_ini:
+            logger.warning(f"  - {mod_registry.get_display_name(mod_name)}")
+        logger.warning("这些 Mod 将不会参与排序")
+    
+    # 只处理在 INI 中的已启用 mod
+    mods_to_sort = [mod for mod in enabled_mods if mod in current_ini_mods]
+    
+    if not mods_to_sort:
+        logger.info("=" * 50)
+        logger.info("没有可排序的 Mod")
+        return
+    
+    # 首次初始化：检查是否有 order 为 None 的 mod
+    needs_init = False
+    for mod_name in mods_to_sort:
+        mod_info = mod_registry.get_mod_info(mod_name)
+        if mod_info and mod_info.get('order') is None:
+            needs_init = True
+            break
+    
+    if needs_init:
+        logger.info("检测到部分 Mod 未初始化顺序，正在自动初始化...")
+        logger.info("=" * 50)
+        
+        # 按当前 INI 中的顺序初始化 order（从 1 开始）
+        # 只初始化在 mods_to_sort 中的 mod
+        init_count = 0
+        for idx, mod_name in enumerate(current_ini_mods, 1):
+            if mod_name in mods_to_sort:
+                mod_registry.set_mod_order(mod_name, idx)
+                display_name = mod_registry.get_display_name(mod_name)
+                logger.info(f"初始化 {display_name}: order = {idx}")
+                init_count += 1
+        
+        logger.info("=" * 50)
+        logger.info(f"已初始化 {init_count} 个 Mod 的顺序\n")
+    
+    # 获取按 order 排序的 mod 列表
+    sorted_mods = mod_registry.get_mods_by_order(enabled_only=True)
+    sorted_mod_names = [mod_name for mod_name, _ in sorted_mods if mod_name in mods_to_sort]
+    
+    # 如果排序后的列表与当前列表不一致，使用当前 INI 顺序作为基准
+    if not sorted_mod_names or len(sorted_mod_names) != len(mods_to_sort):
+        sorted_mod_names = [mod for mod in current_ini_mods if mod in mods_to_sort]
+    
+    # 在内存中维护当前顺序
+    current_order = sorted_mod_names.copy()
+    
+    def display_mod_list():
+        """显示当前 mod 列表"""
+        logger.info("当前 Mod 顺序:")
+        logger.info("=" * 50)
+        for idx, mod_name in enumerate(current_order, 1):
+            mod_info = mod_registry.get_mod_info(mod_name)
+            order = mod_info.get('order') if mod_info else None
+            display_name = mod_registry.get_display_name(mod_name)
+            logger.info(f"{idx}. {display_name} (order: {order or 'None'})")
+        logger.info("=" * 50)
+    
+    # 显示初始列表
+    display_mod_list()
+    
+    # 显示操作提示（vim 风格）
+    print("\n操作说明:")
+    print("  - 输入 \"源序号 目标序号\" 来移动 Mod（例如: 1 6 表示将第1个移动到第6个之前）")
+    print("  - 输入 \":w\" 或 \":wq\" 保存并退出")
+    print("  - 输入 \":q\" 或 \":q!\" 取消并退出")
+    
+    # 直接操作循环（完全按照 vim）
+    while True:
+        user_input = input("\n请输入操作> ").strip()
+        print("")
+        
+        if not user_input:
+            continue
+        
+        # 保存并退出
+        if user_input in [':w', ':wq', ':x']:
+            break
+        
+        # 取消并退出
+        if user_input in [':q', ':q!']:
+            logger.info("已取消排序操作")
+            logger.info("=" * 50)
+            return
+        
+        # 解析移动命令：格式为 "源序号 目标序号"（空格分隔）
+        parts = user_input.split()
+        if len(parts) == 2:
+            try:
+                move_idx = int(parts[0])
+                target_idx = int(parts[1])
+                
+                if move_idx < 1 or move_idx > len(current_order):
+                    logger.warning(f"源序号无效，请输入 1-{len(current_order)} 之间的数字")
+                    continue
+                
+                if target_idx < 1 or target_idx > len(current_order):
+                    logger.warning(f"目标序号无效，请输入 1-{len(current_order)} 之间的数字")
+                    continue
+                
+                # 如果移动到同一位置，跳过
+                if move_idx == target_idx:
+                    logger.info("Mod 已在目标位置")
+                    continue
+                
+                # 获取要移动的 mod
+                move_mod = current_order[move_idx - 1]
+                
+                # 从列表中移除
+                current_order.remove(move_mod)
+                
+                # 计算插入位置（移除后，目标位置的索引需要调整）
+                if move_idx < target_idx:
+                    # 向后移动：移除后，目标位置索引减1
+                    insert_pos = target_idx - 2
+                else:
+                    # 向前移动：移除后，目标位置索引不变
+                    insert_pos = target_idx - 1
+                
+                # 插入到目标位置
+                current_order.insert(insert_pos, move_mod)
+                
+                display_name = mod_registry.get_display_name(move_mod)
+                logger.info(f"已将 {display_name} 移动到位置 {target_idx}")
+                
+                # 显示更新后的列表
+                display_mod_list()
+                
+            except ValueError:
+                logger.warning("请输入有效的数字")
+            except Exception as e:
+                logger.error(f"移动 Mod 时发生错误: {e}")
+        else:
+            logger.warning("无效的输入，请输入 \"源序号 目标序号\"、\":w\" 保存或 \":q\" 退出")
+    
+    # 确认保存
+    print("\n是否保存排序结果? (Y/n): ", end='')
+    save_confirm = input().strip()
+    
+    if save_confirm and save_confirm.lower() != 'y':
+        logger.info("已取消保存")
+        logger.info("=" * 50)
+        return
+    
+    logger.info("正在保存排序结果...")
+    logger.info("=" * 50)
+    
+    # 更新 INI 文件中的顺序
+    # 需要保留不在排序列表中的 mod（保持原有顺序）
+    all_mods_in_ini = ini_manager.get_mod_list(ini_mode)
+    other_mods = [mod for mod in all_mods_in_ini if mod not in mods_to_sort]
+    
+    # 合并：排序的 mod 在前，其他 mod 在后
+    new_order = current_order + other_mods
+    
+    if ini_manager.reorder_mod_list(ini_mode, new_order):
+        # 更新注册表中所有已启用 mod 的 order 值
+        # order 值基于它们在 new_order 中的位置
+        updated_count = 0
+        for idx, mod_name in enumerate(new_order, 1):
+            if mod_name in mods_to_sort:
+                mod_registry.set_mod_order(mod_name, idx)
+                updated_count += 1
+        
+        logger.info("=" * 50)
+        logger.info("排序保存成功")
+        logger.info(f"已更新 {updated_count} 个 Mod 的顺序")
+    else:
+        logger.error("保存排序失败")
+
+
 def repair_ini_config():
     """修补 Fallout76Custom.ini 配置文件"""
     logger.info("开始修补 Fallout76Custom.ini 配置\n")
@@ -551,7 +896,7 @@ def main():
     try:
         while True:
             display_menu()
-            choice = input("\n请选择操作 (1-7): ").strip()
+            choice = input("\n请选择操作 (1-8): ").strip()
             print("")
             
             if choice == '1':
@@ -559,22 +904,24 @@ def main():
             elif choice == '2':
                 install_mods()
             elif choice == '3':
-                view_enabled_mods()
+                view_mod_list()
             elif choice == '4':
                 check_mod_updates()
             elif choice == '5':
                 detect_mod_info()
             elif choice == '6':
-                repair_ini_config()
+                reorder_mods()
             elif choice == '7':
+                repair_ini_config()
+            elif choice == '0':
                 logger.info("再见!\n")
                 logger.info("用户退出程序")
                 break
             else:
-                logger.warning("无效的选择，请输入 1-7\n")
+                logger.warning("无效的选择，请输入 1-9\n")
             
             # 等待用户按键继续
-            if choice != '7':
+            if choice != '0':
                 input("\n按 Enter 键继续...\n\n")
     
     except KeyboardInterrupt:

@@ -8,13 +8,19 @@ from pathlib import Path
 from logger import get_logger
 import json
 
+try:
+    import py7zr
+    HAS_7Z_SUPPORT = True
+except ImportError:
+    HAS_7Z_SUPPORT = False
+
 logger = get_logger()
 
 
 class ModInstaller:
     """Mod 安装器"""
     
-    def __init__(self, data_path, config_dir, ini_manager, mod_registry=None, backup_extensions=None):
+    def __init__(self, data_path, config_dir, ini_manager, mod_registry=None, backup_extensions=None, game_path=None):
         """
         初始化 Mod 安装器
         
@@ -24,12 +30,14 @@ class ModInstaller:
             ini_manager: IniManager 实例
             mod_registry: ModRegistry 实例（用于记录 mod 信息）
             backup_extensions: 需要备份的文件扩展名列表
+            game_path: 游戏主目录路径（用于特殊模组安装位置）
         """
         self.data_path = data_path
         self.config_dir = config_dir
         self.ini_manager = ini_manager
         self.mod_registry = mod_registry
         self.backup_extensions = backup_extensions or ['.json', '.ini']
+        self.game_path = game_path
         
         # Mod 解压目录（脚本所在目录的 mods/ 文件夹）
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -40,15 +48,19 @@ class ModInstaller:
         self.backup_dir = os.path.join(script_dir, 'backups')
         os.makedirs(self.backup_dir, exist_ok=True)
         
-        # 从配置文件读取备份保留数量
+        # 从配置文件读取配置
         try:
             import json
             config_path = os.path.join(script_dir, 'configs', 'config.json')
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
             self.backup_retention = config.get('ini_backup_retention', 5)
+            self.default_install_method = config.get('default_install_method', 'direct')
+            self.special_mod_install_paths = config.get('special_mod_install_paths', {})
         except:
             self.backup_retention = 5
+            self.default_install_method = 'direct'
+            self.special_mod_install_paths = {}
     
     def _should_backup(self, file_path):
         """
@@ -196,20 +208,194 @@ class ModInstaller:
             logger.error(f"解压 ZIP 文件失败 {zip_path}: {e}")
             return None, None
     
-    def _copy_to_data(self, source_file, mod_name=None):
+    def _extract_7z(self, archive_path, base_extract_dir):
         """
-        复制文件到 Data 目录
+        解压 7z 文件到指定目录的子文件夹中
+        
+        每个 7z 文件会解压到 mods/ 下的一个独立子文件夹中，文件夹名基于 7z 文件名
+        
+        Args:
+            archive_path: 7z 文件路径
+            base_extract_dir: 基础解压目录（mods/）
+        
+        Returns:
+            (解压文件列表, 子文件夹路径)，失败返回 (None, None)
+        """
+        if not HAS_7Z_SUPPORT:
+            logger.error("py7zr 库未安装，无法解压 7z 文件。请运行: pip install py7zr")
+            return None, None
+        
+        try:
+            # 基于 7z 文件名创建子文件夹名（去掉扩展名）
+            archive_name = os.path.basename(archive_path)
+            folder_name = os.path.splitext(archive_name)[0]
+            
+            # 创建子文件夹路径
+            mod_subfolder = os.path.join(base_extract_dir, folder_name)
+            
+            # 确保子文件夹存在
+            os.makedirs(mod_subfolder, exist_ok=True)
+            
+            extracted_files = []
+            with py7zr.SevenZipFile(archive_path, mode='r') as archive:
+                # 获取所有文件信息
+                file_list = archive.getnames()
+                
+                # 先解压所有文件到临时目录（保持原有目录结构）
+                temp_extract_dir = os.path.join(mod_subfolder, '_temp')
+                os.makedirs(temp_extract_dir, exist_ok=True)
+                archive.extractall(path=temp_extract_dir)
+                
+                # 遍历所有文件，移动到目标位置（不保持子目录结构）
+                for root, dirs, files in os.walk(temp_extract_dir):
+                    for file_name in files:
+                        source_file = os.path.join(root, file_name)
+                        # 目标路径：直接放在 mod_subfolder 中
+                        target_path = os.path.join(mod_subfolder, file_name)
+                        
+                        # 如果目标文件已存在，先删除
+                        if os.path.exists(target_path):
+                            os.remove(target_path)
+                        
+                        # 移动文件到目标位置
+                        shutil.move(source_file, target_path)
+                        extracted_files.append(target_path)
+                
+                # 清理临时目录
+                try:
+                    shutil.rmtree(temp_extract_dir)
+                except:
+                    pass
+                
+                logger.debug(f"从 {archive_path} 解压了 {len(extracted_files)} 个文件到 {mod_subfolder}")
+                return extracted_files, mod_subfolder
+        except Exception as e:
+            logger.error(f"解压 7z 文件失败 {archive_path}: {e}")
+            return None, None
+    
+    def _get_mod_install_path(self, archive_name):
+        """
+        获取模组的安装路径（特殊模组或默认Data目录）
+        
+        Args:
+            archive_name: 压缩包文件名
+        
+        Returns:
+            目标安装目录路径，如果是特殊模组返回特殊路径，否则返回data_path
+        """
+        if not self.mod_registry:
+            return self.data_path
+        
+        # 提取模组名
+        mod_name = self.mod_registry.extract_mod_name_from_filename(archive_name)
+        if not mod_name:
+            return self.data_path
+        
+        # 检查是否为特殊模组（不区分大小写）
+        for config_mod_name, install_path in self.special_mod_install_paths.items():
+            if mod_name.lower() == config_mod_name.lower():
+                # 构建完整路径
+                if install_path == ".":
+                    # 游戏主目录
+                    if self.game_path:
+                        return self.game_path
+                    else:
+                        logger.warning(f"特殊模组 {mod_name} 需要安装到游戏主目录，但游戏路径未配置")
+                        return self.data_path
+                else:
+                    # 游戏主目录下的子目录
+                    if self.game_path:
+                        full_path = os.path.join(self.game_path, install_path)
+                        return full_path
+                    else:
+                        logger.warning(f"特殊模组 {mod_name} 需要安装到 {install_path}，但游戏路径未配置")
+                        return self.data_path
+        
+        return self.data_path
+    
+    def _get_mod_install_method(self, mod_filename, user_choice=None):
+        """
+        获取模组的安装方式
+        
+        Args:
+            mod_filename: mod文件名（如 "ModName.ba2"）
+            user_choice: 用户选择的安装方式（可选）
+        
+        Returns:
+            实际使用的安装方式（"direct" 或 "copy"）
+        """
+        # 优先级：用户选择 > 注册表中的install_method > default_install_method
+        if user_choice:
+            return user_choice
+        
+        if self.mod_registry:
+            mod_info = self.mod_registry.get_mod_info(mod_filename)
+            if mod_info and mod_info.get('install_method'):
+                return mod_info['install_method']
+        
+        return self.default_install_method
+    
+    def _install_direct(self, extracted_files, mod_subfolder, target_dir, mod_name=None):
+        """
+        方式1：直接将文件从解压文件夹移动到目标目录（保留文件夹）
+        
+        Args:
+            extracted_files: 解压的文件列表
+            mod_subfolder: 解压文件夹路径
+            target_dir: 目标目录路径
+            mod_name: Mod 名称（用于备份时创建子文件夹）
+        
+        Returns:
+            移动的文件路径列表
+        """
+        moved_files = []
+        
+        try:
+            # 确保目标目录存在
+            os.makedirs(target_dir, exist_ok=True)
+            
+            for source_file in extracted_files:
+                filename = os.path.basename(source_file)
+                target_path = os.path.join(target_dir, filename)
+                
+                # 如果目标文件已存在且需要备份，先备份
+                if os.path.exists(target_path) and self._should_backup(target_path):
+                    if not mod_name:
+                        mod_name = os.path.splitext(filename)[0]
+                    self._backup_file(target_path, mod_name)
+                
+                # 移动文件（保留元数据）
+                shutil.move(source_file, target_path)
+                moved_files.append(target_path)
+                logger.debug(f"移动文件到目标目录: {target_path}")
+            
+            logger.info(f"已移动 {len(moved_files)} 个文件到 {target_dir}（保留解压文件夹）")
+            return moved_files
+        except Exception as e:
+            logger.error(f"移动文件到目标目录失败: {e}")
+            return moved_files
+    
+    def _copy_to_data(self, source_file, mod_name=None, target_dir=None):
+        """
+        方式2：复制文件到目标目录
         
         Args:
             source_file: 源文件路径
             mod_name: Mod 名称（用于备份时创建子文件夹）
+            target_dir: 目标目录路径（如果为None则使用data_path）
         
         Returns:
             目标文件路径，失败返回 None
         """
+        if target_dir is None:
+            target_dir = self.data_path
+        
         try:
             filename = os.path.basename(source_file)
-            target_path = os.path.join(self.data_path, filename)
+            target_path = os.path.join(target_dir, filename)
+            
+            # 确保目标目录存在
+            os.makedirs(target_dir, exist_ok=True)
             
             # 如果目标文件已存在且需要备份，先备份
             if os.path.exists(target_path) and self._should_backup(target_path):
@@ -220,10 +406,10 @@ class ModInstaller:
             
             # 复制文件（保留元数据）
             shutil.copy2(source_file, target_path)
-            logger.debug(f"复制文件到 Data 目录: {target_path}")
+            logger.debug(f"复制文件到目标目录: {target_path}")
             return target_path
         except Exception as e:
-            logger.error(f"复制文件到 Data 目录失败 {source_file}: {e}")
+            logger.error(f"复制文件到目标目录失败 {source_file}: {e}")
             return None
     
     
@@ -248,34 +434,41 @@ class ModInstaller:
         
         return mod_files
     
-    def install_mods_from_folder(self, mod_folder_path):
+    def install_mods_from_folder(self, mod_folder_path, user_choices=None, archive_files=None):
         """
         从文件夹批量安装 mod
         
         Args:
             mod_folder_path: mod 文件夹路径
+            user_choices: 用户选择的安装方式字典 {archive_name: "direct"/"copy"}
+            archive_files: 已扫描的压缩包文件列表（完整路径），如果为None则自动扫描
         
         Returns:
             安装结果统计字典
         """
+        if user_choices is None:
+            user_choices = {}
         if not os.path.exists(mod_folder_path) or not os.path.isdir(mod_folder_path):
             logger.error(f"Mod 文件夹不存在: {mod_folder_path}")
             return {'success': 0, 'failed': 0, 'mods': []}
         
-        logger.info(f"开始扫描 Mod 文件夹: {mod_folder_path}")
-        
-        # 查找所有 ZIP 文件
-        zip_files = []
-        for item in os.listdir(mod_folder_path):
-            item_path = os.path.join(mod_folder_path, item)
-            if os.path.isfile(item_path) and item.lower().endswith('.zip'):
-                zip_files.append(item_path)
-        
-        if not zip_files:
-            logger.warning(f"未找到 ZIP 文件: {mod_folder_path}")
-            return {'success': 0, 'failed': 0, 'mods': []}
-        
-        logger.info(f"找到 {len(zip_files)} 个 ZIP 文件")
+        # 如果未提供文件列表，则扫描文件夹
+        if archive_files is None:
+            logger.info(f"开始扫描 Mod 文件夹: {mod_folder_path}")
+            archive_files = []
+            for item in os.listdir(mod_folder_path):
+                item_path = os.path.join(mod_folder_path, item)
+                item_lower = item.lower()
+                if os.path.isfile(item_path) and (item_lower.endswith('.zip') or item_lower.endswith('.7z')):
+                    archive_files.append(item_path)
+            
+            if not archive_files:
+                logger.warning(f"未找到压缩包文件 (.zip 或 .7z): {mod_folder_path}")
+                return {'success': 0, 'failed': 0, 'mods': []}
+            
+            zip_count = sum(1 for f in archive_files if f.lower().endswith('.zip'))
+            sevenz_count = sum(1 for f in archive_files if f.lower().endswith('.7z'))
+            logger.info(f"找到 {len(archive_files)} 个压缩包文件 (ZIP: {zip_count}, 7z: {sevenz_count})")
         
         # 获取配置文件中的 ini_mode 并在开始前同步一次
         try:
@@ -305,7 +498,7 @@ class ModInstaller:
                 print("\n是否自动恢复这些 mod 的配置? (Y/n): ", end='')
                 restore = input().strip().lower()
                 
-                if restore == 'Y':
+                if restore == 'y':
                     restored_count = 0
                     for mod_name in missing_mods:
                         if self.ini_manager.add_mod_to_list(mod_name, ini_mode):
@@ -322,16 +515,23 @@ class ModInstaller:
         failed_count = 0
         installed_mods = []
         
-        for zip_path in zip_files:
-            zip_name = os.path.basename(zip_path)
-            logger.info(f"正在安装: {zip_name}")
+        for archive_path in archive_files:
+            archive_name = os.path.basename(archive_path)
+            logger.info(f"正在安装: {archive_name}")
             
             try:
-                # 解压到脚本目录的 mods/ 下的子文件夹
-                extracted_files, mod_subfolder = self._extract_zip(zip_path, self.mods_dir)
+                # 根据文件扩展名选择解压方法
+                if archive_path.lower().endswith('.zip'):
+                    extracted_files, mod_subfolder = self._extract_zip(archive_path, self.mods_dir)
+                elif archive_path.lower().endswith('.7z'):
+                    extracted_files, mod_subfolder = self._extract_7z(archive_path, self.mods_dir)
+                else:
+                    logger.error(f"不支持的压缩包格式: {archive_name}")
+                    failed_count += 1
+                    continue
                 
                 if not extracted_files:
-                    logger.error(f"解压失败: {zip_name}")
+                    logger.error(f"解压失败: {archive_name}")
                     failed_count += 1
                     continue
                 
@@ -340,19 +540,38 @@ class ModInstaller:
                 # 获取 mod 名称（用于备份文件夹命名）
                 mod_name = os.path.basename(mod_subfolder)
                 
-                # 复制文件到 Data 目录
-                copied_files = []
-                for extracted_file in extracted_files:
-                    copied_path = self._copy_to_data(extracted_file, mod_name)
-                    if copied_path:
-                        copied_files.append(copied_path)
+                # 获取目标安装目录（特殊模组或默认Data目录）
+                target_dir = self._get_mod_install_path(archive_name)
                 
-                if not copied_files:
-                    logger.warning(f"没有文件被复制到 Data 目录: {zip_name}")
+                # 收集 mod 文件（用于确定安装方式）
+                mod_files = self._collect_mod_files(extracted_files)
+                if not mod_files:
+                    logger.warning(f"没有找到 mod 文件: {archive_name}")
+                    failed_count += 1
+                    continue
                 
-                # 收集 mod 文件并添加到 INI
-                mod_files = self._collect_mod_files(copied_files or extracted_files)
+                # 确定安装方式（使用第一个mod文件作为代表）
+                mod_file = mod_files[0]
+                # user_choices中的key是文件名（不含路径），archive_name已经是basename了
+                user_choice = user_choices.get(archive_name)
+                install_method = self._get_mod_install_method(mod_file, user_choice)
                 
+                # 根据安装方式安装文件
+                installed_files = []
+                if install_method == "direct":
+                    # 方式1：直接移动文件
+                    installed_files = self._install_direct(extracted_files, mod_subfolder, target_dir, mod_name)
+                else:
+                    # 方式2：复制文件
+                    for extracted_file in extracted_files:
+                        copied_path = self._copy_to_data(extracted_file, mod_name, target_dir)
+                        if copied_path:
+                            installed_files.append(copied_path)
+                
+                if not installed_files:
+                    logger.warning(f"没有文件被安装到目标目录: {archive_name}")
+                
+                # 添加 mod 文件到 INI（只处理.ba2/.esm/.esp文件）
                 for mod_file in mod_files:
                     if self.ini_manager.add_mod_to_list(mod_file, ini_mode):
                         installed_mods.append(mod_file)
@@ -361,20 +580,27 @@ class ModInstaller:
                         # 注册 mod 到注册表（记录版本号等信息），并标记为已启用
                         if self.mod_registry:
                             version = None  # 由 registry 自动检测
-                            self.mod_registry.register_mod(mod_file, zip_path, version, enabled=True)
+                            mod_info = self.mod_registry.register_mod(mod_file, archive_path, version, enabled=True)
+                            # 保存安装方式到注册表（使用本次安装确定的安装方式）
+                            if mod_info:
+                                # 如果安装时确定了新的安装方式，更新注册表
+                                # 注意：对于已存在的mod，register_mod会保留旧的install_method
+                                # 但这里我们要使用本次安装确定的install_method
+                                mod_info['install_method'] = install_method
+                                self.mod_registry._save_registry()
                 
                 # 删除原压缩包
                 try:
-                    os.remove(zip_path)
-                    logger.info(f"已删除压缩包: {zip_name}")
+                    os.remove(archive_path)
+                    logger.info(f"已删除压缩包: {archive_name}")
                 except Exception as e:
-                    logger.warning(f"删除压缩包失败 {zip_name}: {e}")
+                    logger.warning(f"删除压缩包失败 {archive_name}: {e}")
                 
                 success_count += 1
-                logger.info(f"成功安装: {zip_name}")
+                logger.info(f"成功安装: {archive_name}")
                 
             except Exception as e:
-                logger.error(f"安装 mod 失败 {zip_name}: {e}")
+                logger.error(f"安装 mod 失败 {archive_name}: {e}")
                 failed_count += 1
         
         result = {
@@ -383,6 +609,5 @@ class ModInstaller:
             'mods': installed_mods
         }
         
-        logger.info(f"安装完成: 成功 {success_count} 个, 失败 {failed_count} 个")
         return result
 

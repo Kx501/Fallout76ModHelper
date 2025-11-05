@@ -96,12 +96,13 @@ class NexusAPI:
         endpoint = f"/games/{FALLOUT76_GAME_DOMAIN}/mods/{mod_id}.json"
         return self._make_request(endpoint)
     
-    def get_latest_version(self, mod_id):
+    def get_latest_version(self, mod_id, mod_name=None):
         """
         获取 Mod 的最新版本信息
         
         Args:
             mod_id: Mod ID（字符串或整数）
+            mod_name: 可选的模组名（从 source_file 提取的第一个 '-' 前的部分），用于精确匹配文件
         
         Returns:
             最新版本信息字典，包含 version 和 upload_time 等字段，失败返回 None
@@ -113,42 +114,62 @@ class NexusAPI:
         if not data or 'files' not in data:
             return None
         
-        # 获取所有文件，找到最新上传的文件
+        # 获取所有文件
         files = data.get('files', [])
         if not files:
             return None
         
-        # 找到最新的文件（通常按 upload_time 排序，或使用 file_id 最大的）
-        latest_file = None
-        latest_time = None
+        matched_file = None
         
-        for file_info in files:
-            # 查找主要文件（通常 file_name 不为空或 category_name 为 'MAIN'）
-            upload_time = file_info.get('uploaded_time', 0)
-            if latest_time is None or upload_time > latest_time:
-                latest_time = upload_time
-                latest_file = file_info
+        # 如果提供了 mod_name，尝试精确匹配文件
+        if mod_name:
+            mod_name_lower = mod_name.lower().strip()
+            matched_files = []
+            
+            for file_info in files:
+                file_name = file_info.get('file_name', '').lower()
+                name = file_info.get('name', '').lower()
+                
+                # 检查 file_name 或 name 是否以 mod_name 开头
+                if (file_name and file_name.startswith(mod_name_lower)) or \
+                   (name and name.startswith(mod_name_lower)):
+                    matched_files.append(file_info)
+            
+            if matched_files:
+                # 如果有多个匹配，选择 uploaded_time 最大的
+                matched_file = max(matched_files, key=lambda f: f.get('uploaded_time', 0) or 0)
         
-        if not latest_file:
-            return None
+        # 如果找到匹配的文件
+        if matched_file:
+            # 提取版本号（从 version 字段或 file_name）
+            version = matched_file.get('version')
+            if not version:
+                # 尝试从文件名提取版本号
+                file_name = matched_file.get('file_name', '')
+                version = self._extract_version_from_filename(file_name)
+            
+            file_id = matched_file.get('file_id')
+            # 构造 Mod 页面链接（包含 file_id）
+            mod_url = f"https://www.nexusmods.com/{FALLOUT76_GAME_DOMAIN}/mods/{mod_id}?tab=files&file_id={file_id}"
+            
+            return {
+                'version': version,
+                'upload_time': matched_file.get('uploaded_time'),
+                'file_id': file_id,
+                'file_name': matched_file.get('file_name'),
+                'file_size': matched_file.get('file_size'),
+                'mod_url': mod_url,
+                'matched': True
+            }
         
-        # 提取版本号（从 version 字段或 file_name）
-        version = latest_file.get('version')
-        if not version:
-            # 尝试从文件名提取版本号
-            file_name = latest_file.get('file_name', '')
-            version = self._extract_version_from_filename(file_name)
-        
-        # 构造 Mod 页面链接
+        # 如果找不到匹配的文件
+        # 构造 Mod 页面链接（不包含 file_id）
         mod_url = f"https://www.nexusmods.com/{FALLOUT76_GAME_DOMAIN}/mods/{mod_id}?tab=files"
         
         return {
-            'version': version,
-            'upload_time': latest_file.get('uploaded_time'),
-            'file_id': latest_file.get('file_id'),
-            'file_name': latest_file.get('file_name'),
-            'file_size': latest_file.get('file_size'),
-            'mod_url': mod_url
+            'mod_url': mod_url,
+            'matched': False,
+            'match_warning': "未找到匹配的文件名"
         }
     
     def _extract_version_from_filename(self, filename):

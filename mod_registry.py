@@ -77,13 +77,19 @@ class ModRegistry:
         - 倒数第二部分：version（可能是单个数字或多个连字符分隔）
         - 倒数第三部分：mod ID
         
+        支持的特殊格式：
+        - 版本号包含标签（Beta、Alpha、RC等）：...-{modid}-{v1}-{v2}-{v3}-{tag}-{timestamp}
+        - 版本号前有V前缀：...-{modid}-V{v1}-{v2}-{timestamp}
+        
         例如：
         - HUDChallenges-2860-1-2-4-1761234069.zip
           Mod ID: 2860, Version: 1.2.4
         - HUDModLoader - HUDTools-3144-63-1761061516.zip
           Mod ID: 3144, Version: 63
-        - BetterInventory-UO-3402-1-0-2-1761066832.zip
-          Mod ID: 3402, Version: 1.0.2
+        - FastPip V2-Beta-1269-2-0-10-Beta-1761218034.zip
+          Mod ID: 1269, Version: 2.0.10-Beta
+        - NoLOD-3141-V1-3-1747120450.zip
+          Mod ID: 3141, Version: 1.3
         
         Args:
             filename: 文件名
@@ -93,6 +99,37 @@ class ModRegistry:
         """
         # 移除扩展名
         name_without_ext = os.path.splitext(filename)[0]
+        
+        # 先尝试匹配包含标签的格式（如 ...-{modid}-{v1}-{v2}-{v3}-Beta-{timestamp}）
+        # 支持的标签：Beta, Alpha, RC, Release, Preview 等（不区分大小写）
+        # 格式：任意内容-{modid}-{v1}-{v2}-{v3}-{tag}-{timestamp}
+        # 使用非贪婪匹配，确保正确提取 mod_id
+        tag_pattern = r'^(.+?)-(\d+)-(\d+(?:-\d+)+)-([A-Za-z]+)-(\d+)$'
+        match = re.match(tag_pattern, name_without_ext, re.IGNORECASE)
+        if match:
+            mod_name = match.group(1)
+            mod_id = match.group(2)
+            version_with_dashes = match.group(3)
+            tag = match.group(4)
+            timestamp = match.group(5)
+            # 将版本号从 "2-0-10" 转换为 "2.0.10"，并添加标签
+            version = version_with_dashes.replace('-', '.') + '-' + tag
+            logger.debug(f"从 Nexus 格式文件名提取(带标签): Mod ID={mod_id}, Version={version}")
+            return mod_id, version
+        
+        # 尝试匹配V前缀格式（如 ...-{modid}-V{v1}-{v2}-{timestamp}）
+        v_prefix_pattern = r'^(.+)-(\d+)-V(\d+)-(\d+)-(\d+)$'
+        match = re.match(v_prefix_pattern, name_without_ext, re.IGNORECASE)
+        if match:
+            mod_name = match.group(1)
+            mod_id = match.group(2)
+            version_part1 = match.group(3)
+            version_part2 = match.group(4)
+            timestamp = match.group(5)
+            # 去除V前缀，组合版本号
+            version = f"{version_part1}.{version_part2}"
+            logger.debug(f"从 Nexus 格式文件名提取(V前缀): Mod ID={mod_id}, Version={version}")
+            return mod_id, version
         
         # 从末尾开始分割，匹配模式：...-{modid}-{version}-{timestamp}
         # Nexus 格式：ModName-{modid}-{v1}-{v2}-{v3}-...-{timestamp}
@@ -168,6 +205,75 @@ class ModRegistry:
         
         return None, None
     
+    def extract_mod_name_from_filename(self, filename):
+        """
+        从压缩包文件名提取模组名（modid和版本号之前的部分）
+        
+        用于匹配特殊模组配置，提取modid和版本号之前的所有内容作为模组名
+        
+        Args:
+            filename: 压缩包文件名
+        
+        Returns:
+            模组名字符串，如果未找到返回 None
+        """
+        # 移除扩展名
+        name_without_ext = os.path.splitext(filename)[0]
+        
+        # 尝试匹配包含标签的格式
+        tag_pattern = r'^(.+?)-(\d+)-(\d+(?:-\d+)+)-([A-Za-z]+)-(\d+)$'
+        match = re.match(tag_pattern, name_without_ext, re.IGNORECASE)
+        if match:
+            mod_name = match.group(1)
+            return mod_name
+        
+        # 尝试匹配V前缀格式
+        v_prefix_pattern = r'^(.+)-(\d+)-V(\d+)-(\d+)-(\d+)$'
+        match = re.match(v_prefix_pattern, name_without_ext, re.IGNORECASE)
+        if match:
+            mod_name = match.group(1)
+            return mod_name
+        
+        # 尝试匹配标准格式
+        parts = name_without_ext.split('-')
+        digit_parts = []
+        for i in range(len(parts) - 1, -1, -1):
+            part_cleaned = parts[i].strip()
+            if part_cleaned.isdigit():
+                digit_parts.insert(0, part_cleaned)
+            else:
+                break
+        
+        # 至少需要3段数字：mod_id, version(可能多段), timestamp
+        if len(digit_parts) >= 3:
+            # 找到第一个数字段的位置，之前的部分就是模组名
+            # 计算需要去掉的段数
+            if len(digit_parts) >= 4:
+                # 多段版本号：去掉最后 len(digit_parts) 段
+                mod_name_parts = parts[:-len(digit_parts)]
+            else:
+                # 单段版本号：去掉最后3段
+                mod_name_parts = parts[:-3]
+            
+            if mod_name_parts:
+                mod_name = '-'.join(mod_name_parts)
+                return mod_name
+        
+        # 尝试正则表达式匹配
+        nexus_pattern_multi = r'^(.+)-(\d+)-(\d+(?:-\d+)+)-(\d+)$'
+        match = re.match(nexus_pattern_multi, name_without_ext)
+        if match:
+            mod_name = match.group(1)
+            return mod_name
+        
+        nexus_pattern_single = r'^(.+)-(\d+)-(\d+)-(\d+)$'
+        match = re.match(nexus_pattern_single, name_without_ext)
+        if match:
+            mod_name = match.group(1)
+            return mod_name
+        
+        return None
+    
     def _extract_version_from_filename(self, filename):
         """
         从文件名中提取版本号
@@ -229,42 +335,43 @@ class ModRegistry:
         
         return None
     
-    def detect_version(self, zip_path):
+    def detect_version(self, archive_path):
         """
         尝试检测 mod 的版本号
         
         Args:
-            zip_path: ZIP 文件路径
+            archive_path: 压缩包文件路径（ZIP 或 7z）
         
         Returns:
             版本号字符串，如果未找到返回 None
         """
-        zip_filename = os.path.basename(zip_path)
+        archive_filename = os.path.basename(archive_path)
         
         # 首先尝试从文件名提取（包括 Nexus 格式）
-        version = self._extract_version_from_filename(zip_filename)
+        version = self._extract_version_from_filename(archive_filename)
         if version:
             return version
         
-        # 然后尝试从 ZIP 注释提取
-        version = self._extract_version_from_zip_comment(zip_path)
-        if version:
-            return version
+        # 然后尝试从 ZIP 注释提取（仅支持 ZIP 文件）
+        if archive_path.lower().endswith('.zip'):
+            version = self._extract_version_from_zip_comment(archive_path)
+            if version:
+                return version
         
         return None
     
-    def detect_nexus_mod_id(self, zip_path):
+    def detect_nexus_mod_id(self, archive_path):
         """
         尝试检测 Nexus Mod ID
         
         Args:
-            zip_path: ZIP 文件路径
+            archive_path: 压缩包文件路径（ZIP 或 7z）
         
         Returns:
             Nexus Mod ID 字符串，如果未找到返回 None
         """
-        zip_filename = os.path.basename(zip_path)
-        mod_id = self._extract_nexus_mod_id_from_filename(zip_filename)
+        archive_filename = os.path.basename(archive_path)
+        mod_id = self._extract_nexus_mod_id_from_filename(archive_filename)
         return mod_id
     
     def register_mod(self, mod_filename, zip_path=None, version=None, nexus_mod_id=None, enabled=True):
@@ -291,17 +398,23 @@ class ModRegistry:
         
         mod_info = {
             'name': mod_filename,
+            'alias': None,
             'version': version,
-            'install_date': datetime.now().isoformat(),
-            'source_file': os.path.basename(zip_path) if zip_path else None,
             'nexus_mod_id': nexus_mod_id,
-            'enabled': enabled
+            'enabled': enabled,
+            'order': None,
+            'install_method': None,  # 安装方式：None/"direct"/"copy"
+            'source_file': os.path.basename(zip_path) if zip_path else None,
+            'install_date': datetime.now().isoformat(),
         }
         
-        # 如果 mod 已存在，更新信息但保留安装日期
+        # 如果 mod 已存在，更新信息但保留安装日期、别名、顺序和安装方式
         if mod_filename in self.mods:
             old_info = self.mods[mod_filename]
             mod_info['install_date'] = old_info.get('install_date', mod_info['install_date'])
+            mod_info['alias'] = old_info.get('alias', None)
+            mod_info['order'] = old_info.get('order', None)
+            mod_info['install_method'] = old_info.get('install_method', None)
         
         # 使用 mod 文件名作为 key
         self.mods[mod_filename] = mod_info
@@ -415,4 +528,157 @@ class ModRegistry:
             logger.info(f"移除 mod 记录: {mod_filename}")
             return True
         return False
+    
+    def set_mod_alias(self, mod_filename, alias):
+        """
+        设置 mod 别名
+        
+        Args:
+            mod_filename: mod 文件名
+            alias: 别名（如果为 None 或空字符串则清除别名）
+        
+        Returns:
+            是否成功设置
+        """
+        if mod_filename not in self.mods:
+            return False
+        
+        # 如果 alias 为空字符串或 None，清除别名
+        if not alias or alias.strip() == '':
+            self.mods[mod_filename]['alias'] = None
+        else:
+            self.mods[mod_filename]['alias'] = alias.strip()
+        
+        self._save_registry()
+        logger.debug(f"设置 mod {mod_filename} 别名: {alias or '(无)'}")
+        return True
+    
+    def get_display_name(self, mod_filename):
+        """
+        获取 mod 的显示名称（如果有别名则返回别名，否则返回原始名称）
+        
+        Args:
+            mod_filename: mod 文件名
+        
+        Returns:
+            显示名称
+        """
+        if mod_filename not in self.mods:
+            return mod_filename
+        
+        mod_info = self.mods[mod_filename]
+        alias = mod_info.get('alias')
+        if alias:
+            return alias
+        return mod_filename
+    
+    def set_mod_install_method(self, mod_filename, method):
+        """
+        设置 mod 的安装方式
+        
+        Args:
+            mod_filename: mod 文件名
+            method: 安装方式（"direct" 或 "copy"），None 表示使用默认
+        
+        Returns:
+            (是否成功, 提示信息)
+        """
+        if mod_filename not in self.mods:
+            return False, f"Mod {mod_filename} 不存在于注册表中"
+        
+        if method not in [None, "direct", "copy"]:
+            return False, "安装方式必须是 'direct'、'copy' 或 None"
+        
+        old_method = self.mods[mod_filename].get('install_method')
+        
+        # 转换规则：所有安装方式修改都将在下次安装时生效
+        self.mods[mod_filename]['install_method'] = method
+        self._save_registry()
+        return True, "安装方式已更新，将在下次安装时生效"
+    
+    def set_mod_order(self, mod_filename, order):
+        """
+        设置 mod 的排序顺序
+        
+        Args:
+            mod_filename: mod 文件名
+            order: 排序顺序（整数，None 表示未排序）
+        
+        Returns:
+            是否成功设置
+        """
+        if mod_filename not in self.mods:
+            return False
+        
+        if order is not None and not isinstance(order, int):
+            return False
+        
+        self.mods[mod_filename]['order'] = order
+        self._save_registry()
+        logger.debug(f"设置 mod {mod_filename} 顺序: {order}")
+        return True
+    
+    def get_mods_by_order(self, enabled_only=False):
+        """
+        按 order 排序获取所有 mod
+        
+        Args:
+            enabled_only: 是否只返回已启用的 mod
+        
+        Returns:
+            按 order 排序的 (mod_filename, mod_info) 元组列表
+            None 值的 mod 排在最后
+        """
+        mods_list = []
+        for mod_filename, mod_info in self.mods.items():
+            if enabled_only and not mod_info.get('enabled', False):
+                continue
+            mods_list.append((mod_filename, mod_info))
+        
+        # 排序：有 order 的按 order 排序，None 值排在最后
+        def sort_key(item):
+            _, mod_info = item
+            order = mod_info.get('order')
+            if order is None:
+                return (1, 0)  # None 排在最后
+            return (0, order)  # 有 order 的按 order 排序
+        
+        mods_list.sort(key=sort_key)
+        return mods_list
+    
+    def validate_and_fix_order(self, enabled_mods_in_ini_order):
+        """
+        验证并修复 order 值（处理缺失、重复等问题）
+        
+        根据 INI 文件中的顺序重新分配 order 值
+        
+        Args:
+            enabled_mods_in_ini_order: 已启用 mod 的文件名列表（按 INI 中的顺序）
+        
+        Returns:
+            修复的 mod 数量
+        """
+        fixed_count = 0
+        
+        # 为所有已启用的 mod 重新分配 order（从 1 开始）
+        for idx, mod_filename in enumerate(enabled_mods_in_ini_order, 1):
+            if mod_filename in self.mods:
+                old_order = self.mods[mod_filename].get('order')
+                if old_order != idx:
+                    self.mods[mod_filename]['order'] = idx
+                    fixed_count += 1
+        
+        # 检查是否有不在 INI 列表中的已启用 mod，将其 order 设为 None
+        enabled_mods_set = set(enabled_mods_in_ini_order)
+        for mod_filename, mod_info in self.mods.items():
+            if mod_info.get('enabled', False) and mod_filename not in enabled_mods_set:
+                if mod_info.get('order') is not None:
+                    self.mods[mod_filename]['order'] = None
+                    fixed_count += 1
+        
+        if fixed_count > 0:
+            self._save_registry()
+            logger.debug(f"修复了 {fixed_count} 个 mod 的 order 值")
+        
+        return fixed_count
 

@@ -331,4 +331,76 @@ class IniManager:
         else:
             logger.error(f"同步 INI 模式失败: {current_mode} -> {target_mode}")
             return False
+    
+    def get_mod_list_with_order(self, list_type='sResourceArchive2List', mod_registry=None):
+        """
+        获取按 order 排序的 mod 列表
+        
+        Args:
+            list_type: 列表类型
+            mod_registry: ModRegistry 实例（用于获取 order 信息）
+        
+        Returns:
+            按 order 排序的 mod 列表
+        """
+        mod_list = self.get_mod_list(list_type)
+        
+        if not mod_registry or not mod_list:
+            return mod_list
+        
+        # 获取所有 mod 的 order 信息
+        mods_with_order = []
+        mods_without_order = []
+        
+        for mod_name in mod_list:
+            mod_info = mod_registry.get_mod_info(mod_name)
+            if mod_info:
+                order = mod_info.get('order')
+                if order is not None:
+                    mods_with_order.append((order, mod_name))
+                else:
+                    mods_without_order.append(mod_name)
+            else:
+                mods_without_order.append(mod_name)
+        
+        # 按 order 排序
+        mods_with_order.sort(key=lambda x: x[0])
+        
+        # 合并结果：有 order 的在前，没有 order 的在后，保持原有顺序
+        result = [mod_name for _, mod_name in mods_with_order]
+        result.extend(mods_without_order)
+        
+        return result
+    
+    def reorder_mod_list(self, list_type, new_order):
+        """
+        重新排序 INI 中的 mod 列表
+        
+        Args:
+            list_type: 列表类型
+            new_order: 新的 mod 顺序列表（mod 文件名列表）
+        
+        Returns:
+            是否成功重新排序
+        """
+        if not self._read_ini():
+            return False
+        
+        # 确保 [Archive] 节存在
+        if not self.parser.has_section('Archive'):
+            self.parser.add_section('Archive')
+        
+        # 更新列表
+        if new_order:
+            new_value = ', '.join(new_order)
+            self.parser.set('Archive', list_type, new_value)
+        else:
+            self.parser.remove_option('Archive', list_type)
+        
+        if self._write_ini():
+            logger.info(f"成功重新排序 {list_type} 中的 mod 列表")
+            return True
+        else:
+            logger.error(f"重新排序 {list_type} 失败")
+            return False
 
