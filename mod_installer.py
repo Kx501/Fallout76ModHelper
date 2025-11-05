@@ -2,6 +2,7 @@
 Mod 安装模块 - 批量安装 mod 压缩包
 """
 import os
+import sys
 import zipfile
 import shutil
 from pathlib import Path
@@ -13,6 +14,12 @@ try:
     HAS_7Z_SUPPORT = True
 except ImportError:
     HAS_7Z_SUPPORT = False
+
+try:
+    import rarfile
+    HAS_RAR_SUPPORT = True
+except ImportError:
+    HAS_RAR_SUPPORT = False
 
 logger = get_logger()
 
@@ -273,6 +280,142 @@ class ModInstaller:
             logger.error(f"解压 7z 文件失败 {archive_path}: {e}")
             return None, None
     
+    def _find_unrar_executable(self):
+        """
+        尝试查找系统中的 unrar 可执行文件
+        
+        Returns:
+            unrar 可执行文件路径，如果未找到返回 None
+        """
+        # 首先检查 PATH 中是否有 unrar
+        unrar_path = shutil.which('unrar')
+        if unrar_path:
+            return unrar_path
+        
+        unrar64_path = shutil.which('unrar64')
+        if unrar64_path:
+            return unrar64_path
+        
+        # 检查常见的 WinRAR 安装路径（WinRAR 通常包含 unrar.exe）
+        if sys.platform == 'win32':
+            common_paths = [
+                r'C:\Program Files\WinRAR\unrar.exe',
+                r'C:\Program Files (x86)\WinRAR\unrar.exe',
+                r'C:\Program Files\WinRAR\UnRAR.exe',
+                r'C:\Program Files (x86)\WinRAR\UnRAR.exe',
+            ]
+            
+            # 也检查环境变量中的路径
+            program_files = os.environ.get('ProgramFiles', '')
+            program_files_x86 = os.environ.get('ProgramFiles(x86)', '')
+            if program_files:
+                common_paths.extend([
+                    os.path.join(program_files, 'WinRAR', 'unrar.exe'),
+                    os.path.join(program_files, 'WinRAR', 'UnRAR.exe'),
+                ])
+            if program_files_x86:
+                common_paths.extend([
+                    os.path.join(program_files_x86, 'WinRAR', 'unrar.exe'),
+                    os.path.join(program_files_x86, 'WinRAR', 'UnRAR.exe'),
+                ])
+            
+            for path in common_paths:
+                if os.path.exists(path) and os.path.isfile(path):
+                    return path
+        
+        return None
+    
+    def _extract_rar(self, archive_path, base_extract_dir):
+        """
+        解压 RAR 文件到指定目录的子文件夹中
+        
+        每个 RAR 文件会解压到 mods/ 下的一个独立子文件夹中，文件夹名基于 RAR 文件名
+        
+        Args:
+            archive_path: RAR 文件路径
+            base_extract_dir: 基础解压目录（mods/）
+        
+        Returns:
+            (解压文件列表, 子文件夹路径)，失败返回 (None, None)
+        """
+        if not HAS_RAR_SUPPORT:
+            logger.error("rarfile 库未安装，无法解压 RAR 文件。请运行: pip install rarfile")
+            return None, None
+        
+        # 尝试自动查找 unrar 可执行文件
+        unrar_path = self._find_unrar_executable()
+        if unrar_path:
+            rarfile.UNRAR_TOOL = unrar_path
+            logger.debug(f"找到 unrar 工具: {unrar_path}")
+        
+        try:
+            # 基于 RAR 文件名创建子文件夹名（去掉扩展名）
+            archive_name = os.path.basename(archive_path)
+            folder_name = os.path.splitext(archive_name)[0]
+            
+            # 创建子文件夹路径
+            mod_subfolder = os.path.join(base_extract_dir, folder_name)
+            
+            # 确保子文件夹存在
+            os.makedirs(mod_subfolder, exist_ok=True)
+            
+            extracted_files = []
+            with rarfile.RarFile(archive_path, 'r') as archive:
+                # 获取所有文件信息
+                file_list = archive.namelist()
+                
+                # 先解压所有文件到临时目录（保持原有目录结构）
+                temp_extract_dir = os.path.join(mod_subfolder, '_temp')
+                os.makedirs(temp_extract_dir, exist_ok=True)
+                archive.extractall(path=temp_extract_dir)
+                
+                # 遍历所有文件，移动到目标位置（不保持子目录结构）
+                for root, dirs, files in os.walk(temp_extract_dir):
+                    for file_name in files:
+                        source_file = os.path.join(root, file_name)
+                        # 目标路径：直接放在 mod_subfolder 中
+                        target_path = os.path.join(mod_subfolder, file_name)
+                        
+                        # 如果目标文件已存在，先删除
+                        if os.path.exists(target_path):
+                            os.remove(target_path)
+                        
+                        # 移动文件到目标位置
+                        shutil.move(source_file, target_path)
+                        extracted_files.append(target_path)
+                
+                # 清理临时目录
+                try:
+                    shutil.rmtree(temp_extract_dir)
+                except:
+                    pass
+                
+                logger.debug(f"从 {archive_path} 解压了 {len(extracted_files)} 个文件到 {mod_subfolder}")
+                return extracted_files, mod_subfolder
+        except rarfile.RarCannotExec:
+            logger.error("=" * 50)
+            logger.error("无法找到 unrar 工具，无法解压 RAR 文件。")
+            logger.error("")
+            logger.error("解决方案:")
+            logger.error("1. WinRAR 用户: WinRAR 安装目录通常包含 unrar.exe")
+            logger.error("   - 检查: C:\\Program Files\\WinRAR\\unrar.exe")
+            logger.error("   - 或: C:\\Program Files (x86)\\WinRAR\\unrar.exe")
+            logger.error("   - 将 unrar.exe 所在目录添加到系统 PATH 环境变量")
+            logger.error("")
+            logger.error("2. 单独安装 unrar:")
+            logger.error("   - 下载: https://www.rarlab.com/rar_add.htm")
+            logger.error("   - 解压 unrar.exe 到任意目录，并添加到 PATH")
+            logger.error("")
+            logger.error("3. 使用其他压缩格式: 将 RAR 文件转换为 ZIP 或 7Z 格式")
+            logger.error("=" * 50)
+            return None, None
+        except rarfile.BadRarFile:
+            logger.error(f"无效的 RAR 文件: {archive_path}")
+            return None, None
+        except Exception as e:
+            logger.error(f"解压 RAR 文件失败 {archive_path}: {e}")
+            return None, None
+    
     def _get_mod_install_path(self, archive_name):
         """
         获取模组的安装路径（特殊模组或默认Data目录）
@@ -459,16 +602,17 @@ class ModInstaller:
             for item in os.listdir(mod_folder_path):
                 item_path = os.path.join(mod_folder_path, item)
                 item_lower = item.lower()
-                if os.path.isfile(item_path) and (item_lower.endswith('.zip') or item_lower.endswith('.7z')):
+                if os.path.isfile(item_path) and (item_lower.endswith('.zip') or item_lower.endswith('.7z') or item_lower.endswith('.rar')):
                     archive_files.append(item_path)
             
             if not archive_files:
-                logger.warning(f"未找到压缩包文件 (.zip 或 .7z): {mod_folder_path}")
+                logger.warning(f"未找到压缩包文件 (.zip, .7z 或 .rar): {mod_folder_path}")
                 return {'success': 0, 'failed': 0, 'mods': []}
             
             zip_count = sum(1 for f in archive_files if f.lower().endswith('.zip'))
             sevenz_count = sum(1 for f in archive_files if f.lower().endswith('.7z'))
-            logger.info(f"找到 {len(archive_files)} 个压缩包文件 (ZIP: {zip_count}, 7z: {sevenz_count})")
+            rar_count = sum(1 for f in archive_files if f.lower().endswith('.rar'))
+            logger.info(f"找到 {len(archive_files)} 个压缩包文件 (ZIP: {zip_count}, 7z: {sevenz_count}, RAR: {rar_count})")
         
         # 获取配置文件中的 ini_mode 并在开始前同步一次
         try:
@@ -496,6 +640,7 @@ class ModInstaller:
                     print(f"  - {mod}")
                 
                 print("\n是否自动恢复这些 mod 的配置? (Y/n): ", end='')
+                print("")
                 restore = input().strip().lower()
                 
                 if restore == 'y':
@@ -525,6 +670,8 @@ class ModInstaller:
                     extracted_files, mod_subfolder = self._extract_zip(archive_path, self.mods_dir)
                 elif archive_path.lower().endswith('.7z'):
                     extracted_files, mod_subfolder = self._extract_7z(archive_path, self.mods_dir)
+                elif archive_path.lower().endswith('.rar'):
+                    extracted_files, mod_subfolder = self._extract_rar(archive_path, self.mods_dir)
                 else:
                     logger.error(f"不支持的压缩包格式: {archive_name}")
                     failed_count += 1

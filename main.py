@@ -70,7 +70,7 @@ def display_menu():
     print("4. 检查 Mod 更新")
     print("5. 更新 Mod 信息")
     print("6. 更新 Mod 排序")
-    print("7. 修补 Fallout76Custom.ini")
+    print("7. 更新 Fallout76Custom.ini")
     print("0. 退出")
     print("=" * 50)
 
@@ -180,7 +180,7 @@ def install_mods():
     for item in os.listdir(mod_folder):
         item_path = os.path.join(mod_folder, item)
         item_lower = item.lower()
-        if os.path.isfile(item_path) and (item_lower.endswith('.zip') or item_lower.endswith('.7z')):
+        if os.path.isfile(item_path) and (item_lower.endswith('.zip') or item_lower.endswith('.7z') or item_lower.endswith('.rar')):
             archive_files.append(item_path)  # 完整路径，用于安装
             archive_names.append(item)  # 文件名，用于显示和用户选择
     
@@ -588,8 +588,10 @@ def detect_mod_info():
             else:
                 # 新发现的 mod（不在注册表中）
                 # 如果有版本号或 Mod ID 信息，注册它
+                # 注意：这里传入 None 而不是 folder_path，因为 register_mod 期望压缩包文件路径
+                # 而 detect_mod_info 处理的是已解压的文件夹，版本和 mod_id 已从文件夹名中提取
                 if version or nexus_mod_id:
-                    mod_registry.register_mod(mod_file, folder_path, version, nexus_mod_id, enabled=False)
+                    mod_registry.register_mod(mod_file, None, version, nexus_mod_id, enabled=False)
                     new_count += 1
                     logger.info(f"新发现 mod: {mod_file}")
                     if version:
@@ -811,9 +813,9 @@ def reorder_mods():
         logger.error("保存排序失败")
 
 
-def repair_ini_config():
-    """修补 Fallout76Custom.ini 配置文件"""
-    logger.info("开始修补 Fallout76Custom.ini 配置\n")
+def update_ini_config():
+    """更新 Fallout76Custom.ini 配置文件（添加缺失的已启用 mod，删除未启用的 mod）"""
+    logger.info("开始更新 Fallout76Custom.ini 配置\n")
     
     # 初始化路径检测器
     path_detector = PathDetector()
@@ -835,60 +837,101 @@ def repair_ini_config():
     # 获取已启用的 mod 列表
     enabled_mods = mod_registry.get_enabled_mods()
     
-    if not enabled_mods:
-        logger.info("当前没有已启用的 Mod，无需修补\n")
-        return
-    
     # 获取当前 INI 中的 mod 列表
     current_ini_mods = ini_manager.get_mod_list(ini_mode)
     
-    # 找出丢失的 mod
+    # 找出需要添加的 mod（已启用但不在 INI 中）
     missing_mods = [mod for mod in enabled_mods if mod not in current_ini_mods]
     
-    if not missing_mods:
-        logger.info("所有已启用的 Mod 配置正常，无需修补\n")
+    # 找出需要删除的 mod（在 INI 中但未启用）
+    # 只处理注册表中存在的 mod，忽略注册表中不存在的 mod（可能是手动添加的）
+    disabled_mods = []
+    for mod_name in current_ini_mods:
+        mod_info = mod_registry.get_mod_info(mod_name)
+        if mod_info and not mod_info.get('enabled', False):
+            disabled_mods.append(mod_name)
+    
+    # 如果没有需要更新的内容
+    if not missing_mods and not disabled_mods:
+        logger.info("所有 Mod 配置已同步，无需更新\n")
         return
     
-    logger.info(f"检测到 {len(missing_mods)} 个已启用的 Mod 配置丢失:")
-    logger.info("=" * 50)
-    for idx, mod_name in enumerate(missing_mods, 1):
-        mod_info = mod_registry.get_mod_info(mod_name)
-        version = mod_info.get('version', '未知') if mod_info else '未知'
-        logger.info(f"{idx}. {mod_name} (版本: {version})")
+    # 显示需要更新的内容
+    logger.info("需要更新的内容:")
     logger.info("=" * 50)
     
-    print("\n是否恢复这些 Mod 的配置? (Y/n): ", end='')
-    restore = input().strip()
+    if missing_mods:
+        logger.info(f"需要添加的已启用 Mod ({len(missing_mods)} 个):")
+        for idx, mod_name in enumerate(missing_mods, 1):
+            mod_info = mod_registry.get_mod_info(mod_name)
+            version = mod_info.get('version', '未知') if mod_info else '未知'
+            display_name = mod_registry.get_display_name(mod_name)
+            logger.info(f"  {idx}. {display_name} (版本: {version})")
     
-    if restore and restore.lower() != 'y':
-        logger.info("已取消修补操作")
+    if disabled_mods:
+        logger.info(f"需要删除的未启用 Mod ({len(disabled_mods)} 个):")
+        for idx, mod_name in enumerate(disabled_mods, 1):
+            display_name = mod_registry.get_display_name(mod_name)
+            logger.info(f"  {idx}. {display_name}")
+    
+    logger.info("=" * 50)
+    
+    print("\n是否执行更新? (Y/n): ", end='')
+    print("")
+    confirm = input().strip()
+    
+    if confirm and confirm.lower() != 'y':
+        logger.info("已取消更新操作")
         return
     
-    logger.info(f"开始恢复 {len(missing_mods)} 个丢失的 Mod 配置")
+    logger.info("开始更新 INI 配置...")
     logger.info("=" * 50)
     
-    restored_count = 0
-    failed_count = 0
+    added_count = 0
+    removed_count = 0
+    failed_add_count = 0
+    failed_remove_count = 0
     
-    for mod_name in missing_mods:
-        # 检查 mod 是否在注册表中
-        mod_info = mod_registry.get_mod_info(mod_name)
-        if not mod_info:
-            logger.warning(f"{mod_name} 不在注册表中，跳过")
-            failed_count += 1
-            continue
-        
-        # 添加 mod 到 INI 配置
-        if ini_manager.add_mod_to_list(mod_name, ini_mode):
-            mod_registry.mark_mod_enabled(mod_name)
-            restored_count += 1
-            logger.info(f"成功恢复 {mod_name} 的配置")
-        else:
-            logger.error(f"恢复 {mod_name} 的配置失败")
-            failed_count += 1
+    # 添加缺失的已启用 mod
+    if missing_mods:
+        logger.info("添加缺失的已启用 Mod...")
+        for mod_name in missing_mods:
+            # 检查 mod 是否在注册表中
+            mod_info = mod_registry.get_mod_info(mod_name)
+            if not mod_info:
+                logger.warning(f"{mod_name} 不在注册表中，跳过")
+                failed_add_count += 1
+                continue
+            
+            # 添加 mod 到 INI 配置
+            if ini_manager.add_mod_to_list(mod_name, ini_mode):
+                mod_registry.mark_mod_enabled(mod_name)
+                added_count += 1
+                display_name = mod_registry.get_display_name(mod_name)
+                logger.info(f"✓ 已添加: {display_name}")
+            else:
+                failed_add_count += 1
+                display_name = mod_registry.get_display_name(mod_name)
+                logger.error(f"✗ 添加失败: {display_name}")
+    
+    # 删除未启用的 mod
+    if disabled_mods:
+        logger.info("删除未启用的 Mod...")
+        for mod_name in disabled_mods:
+            # 从 INI 中移除 mod
+            if ini_manager.remove_mod_from_list(mod_name, ini_mode):
+                removed_count += 1
+                display_name = mod_registry.get_display_name(mod_name)
+                logger.info(f"✓ 已删除: {display_name}")
+            else:
+                failed_remove_count += 1
+                display_name = mod_registry.get_display_name(mod_name)
+                logger.error(f"✗ 删除失败: {display_name}")
     
     logger.info("=" * 50)
-    logger.info(f"修补完成: 成功 {restored_count} 个, 失败 {failed_count} 个")
+    logger.info(f"更新完成:")
+    logger.info(f"  添加: 成功 {added_count} 个, 失败 {failed_add_count} 个")
+    logger.info(f"  删除: 成功 {removed_count} 个, 失败 {failed_remove_count} 个")
 
 
 def main():
@@ -896,7 +939,7 @@ def main():
     try:
         while True:
             display_menu()
-            choice = input("\n请选择操作 (1-8): ").strip()
+            choice = input("\n请选择操作 (1-9): ").strip()
             print("")
             
             if choice == '1':
@@ -912,7 +955,7 @@ def main():
             elif choice == '6':
                 reorder_mods()
             elif choice == '7':
-                repair_ini_config()
+                update_ini_config()
             elif choice == '0':
                 logger.info("再见!\n")
                 logger.info("用户退出程序")
