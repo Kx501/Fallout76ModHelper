@@ -449,6 +449,23 @@ class ModRegistry:
             self._save_registry()
             logger.debug(f"标记 mod 为已禁用: {mod_filename}")
     
+    def unregister_mod(self, mod_filename):
+        """
+        从注册表中删除 mod
+        
+        Args:
+            mod_filename: mod 文件名
+        
+        Returns:
+            是否成功删除
+        """
+        if mod_filename in self.mods:
+            del self.mods[mod_filename]
+            self._save_registry()
+            logger.debug(f"从注册表删除 mod: {mod_filename}")
+            return True
+        return False
+    
     def get_enabled_mods(self):
         """
         获取所有已启用的 mod 列表

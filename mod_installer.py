@@ -64,10 +64,12 @@ class ModInstaller:
             self.backup_retention = config.get('ini_backup_retention', 5)
             self.default_install_method = config.get('default_install_method', 'direct')
             self.special_mod_install_paths = config.get('special_mod_install_paths', {})
+            self.exclude_patterns = config.get('exclude_patterns', [])
         except:
             self.backup_retention = 5
             self.default_install_method = 'direct'
             self.special_mod_install_paths = {}
+            self.exclude_patterns = []
     
     def _should_backup(self, file_path):
         """
@@ -81,6 +83,30 @@ class ModInstaller:
         """
         ext = os.path.splitext(file_path)[1].lower()
         return ext in self.backup_extensions
+    
+    def _should_exclude_file(self, file_path):
+        """
+        判断文件是否应该被排除（不安装到Data目录）
+        
+        Args:
+            file_path: 文件路径
+        
+        Returns:
+            是否应该被排除
+        """
+        if not self.exclude_patterns:
+            return False
+        
+        import fnmatch
+        filename = os.path.basename(file_path)
+        
+        # 对每个排除模式进行匹配（大小写不敏感）
+        for pattern in self.exclude_patterns:
+            if fnmatch.fnmatch(filename.lower(), pattern.lower()):
+                logger.debug(f"文件被排除规则匹配: {filename} (模式: {pattern})")
+                return True
+        
+        return False
     
     def _backup_file(self, file_path, mod_name=None):
         """
@@ -492,12 +518,19 @@ class ModInstaller:
             移动的文件路径列表
         """
         moved_files = []
+        excluded_count = 0
         
         try:
             # 确保目标目录存在
             os.makedirs(target_dir, exist_ok=True)
             
             for source_file in extracted_files:
+                # 检查文件是否应该被排除
+                if self._should_exclude_file(source_file):
+                    excluded_count += 1
+                    logger.debug(f"跳过被排除的文件: {os.path.basename(source_file)}")
+                    continue
+                
                 filename = os.path.basename(source_file)
                 target_path = os.path.join(target_dir, filename)
                 
@@ -512,7 +545,10 @@ class ModInstaller:
                 moved_files.append(target_path)
                 logger.debug(f"移动文件到目标目录: {target_path}")
             
-            logger.info(f"已移动 {len(moved_files)} 个文件到 {target_dir}（保留解压文件夹）")
+            if excluded_count > 0:
+                logger.info(f"已移动 {len(moved_files)} 个文件到 {target_dir}，排除了 {excluded_count} 个文件（保留解压文件夹）")
+            else:
+                logger.info(f"已移动 {len(moved_files)} 个文件到 {target_dir}（保留解压文件夹）")
             return moved_files
         except Exception as e:
             logger.error(f"移动文件到目标目录失败: {e}")
@@ -528,8 +564,13 @@ class ModInstaller:
             target_dir: 目标目录路径（如果为None则使用data_path）
         
         Returns:
-            目标文件路径，失败返回 None
+            目标文件路径，失败返回 None，如果文件被排除则返回 None
         """
+        # 检查文件是否应该被排除
+        if self._should_exclude_file(source_file):
+            logger.debug(f"跳过被排除的文件: {os.path.basename(source_file)}")
+            return None
+        
         if target_dir is None:
             target_dir = self.data_path
         
@@ -705,6 +746,7 @@ class ModInstaller:
                 
                 # 根据安装方式安装文件
                 installed_files = []
+                excluded_count = 0
                 if install_method == "direct":
                     # 方式1：直接移动文件
                     installed_files = self._install_direct(extracted_files, mod_subfolder, target_dir, mod_name)
@@ -714,6 +756,11 @@ class ModInstaller:
                         copied_path = self._copy_to_data(extracted_file, mod_name, target_dir)
                         if copied_path:
                             installed_files.append(copied_path)
+                        elif self._should_exclude_file(extracted_file):
+                            excluded_count += 1
+                    
+                    if excluded_count > 0:
+                        logger.info(f"已复制 {len(installed_files)} 个文件到 {target_dir}，排除了 {excluded_count} 个文件")
                 
                 if not installed_files:
                     logger.warning(f"没有文件被安装到目标目录: {archive_name}")

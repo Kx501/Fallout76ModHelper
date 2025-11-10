@@ -14,6 +14,8 @@ from nexus_api import NexusAPI
 
 logger = get_logger()
 
+# TODO: 添加删除 mod、清理功能
+# TODO: 使用按键选择的菜单
 
 def load_config():
     """加载配置文件，如果不存在则创建默认配置"""
@@ -30,14 +32,22 @@ def load_config():
         default_config = {
             "game_path": None,
             "launch_url": "steam://rungameid/1151340",
-            "ini_mode": "sResourceArchive2List",
-            "backup_extensions": [".json", ".ini"],
-            "ini_backup_retention": 5,
             "mod_archive_directory": None,
-            "default_install_method": "direct",
+            "ini_mode": "sResourceArchive2List",
+            "ini_backup_retention": 5,
+            "backup_extensions": [".json", ".ini"],
             "nexus_api": {
                 "api_key": ""
             },
+            "default_install_method": "direct",
+            "exclude_patterns": [
+                "*.png",
+                "*.jpg",
+                "*.jpeg",
+                "*.txt",
+                "*.md",
+                "__HowToInstall_visual.html"
+            ],
             "special_mod_install_paths": {
                 "SFE": "."
             }
@@ -71,6 +81,8 @@ def display_menu():
     print("5. 更新 Mod 信息")
     print("6. 更新 Mod 排序")
     print("7. 更新 Fallout76Custom.ini")
+    print("8. 删除 Mod")
+    print("9. 打开目录")
     print("0. 退出")
     print("=" * 50)
 
@@ -323,6 +335,18 @@ def view_mod_list():
     logger.info("=" * 50)
     logger.info("Mod 列表查询完成\n")
     
+    # 紧凑显示启用和未启用的mod列表
+    if enabled_mods:
+        enabled_display_names = [mod_registry.get_display_name(mod_name) for mod_name in enabled_mods]
+        logger.info(f"已启用 ({enabled_count}):")
+        logger.info(f"{', '.join(enabled_display_names)}")
+        print("")
+    if disabled_mods:
+        disabled_display_names = [mod_registry.get_display_name(mod_name) for mod_name in disabled_mods]
+        logger.info(f"未启用 ({disabled_count}):")
+        logger.info(f"{', '.join(disabled_display_names)}")
+        print("")
+    
     # 检查是否有丢失的配置
     if current_ini_mods:
         missing_mods = [mod for mod in enabled_mods if mod not in current_ini_mods]
@@ -424,8 +448,8 @@ def check_mod_updates():
         # 使用显示名称（别名或原始名称）
         display_name = mod_registry.get_display_name(mod_name)
         
-        logger.info(f"检查更新: {display_name}")
-        logger.info(f"Mod ID: {mod_id}, 当前版本: {current_version or '未知'}")
+        # logger.info(f"检查更新: {display_name}")
+        logger.info(f"Mod ID: {mod_id}, {display_name}")
         
         # 从 source_file 提取模组名（使用更精确的提取方法）
         mod_name_prefix = mod_registry.extract_mod_name_from_filename(source_file) if source_file else None
@@ -435,7 +459,7 @@ def check_mod_updates():
         
         if not latest_info:
             error_mods.append((display_name, "无法获取更新信息"))
-            logger.warning(f"无法获取 {display_name} 的更新信息")
+            logger.warning(f"{display_name}: 无法获取更新信息")
             continue
         
         # 检查是否找到匹配的文件
@@ -453,35 +477,31 @@ def check_mod_updates():
         
         if not latest_version:
             error_mods.append((display_name, "无法识别版本号"))
-            logger.warning(f"无法识别 {display_name} 的最新版本号")
+            logger.warning("无法识别版本号")
             continue
-        
-        logger.info(f"{display_name} 当前版本: {current_version or '未知'}")
-        logger.info(f"{display_name} 最新版本: {latest_version}")
         
         # 比较版本
         if not current_version:
             # 如果没有当前版本号，假设有更新
             updated_mods.append((display_name, current_version, latest_version, latest_info))
-            logger.info(f"{display_name} 发现新版本: {latest_version}")
+            logger.info(f"发现新版本 {latest_version}")
         else:
             has_update = nexus_api.compare_versions(current_version, latest_version)
             if has_update:
                 updated_mods.append((display_name, current_version, latest_version, latest_info))
-                logger.info(f"{display_name} 发现新版本: {current_version} -> {latest_version}")
+                logger.info(f"发现新版本 {current_version} -> {latest_version}")
             elif has_update is False:
                 no_update_mods.append((display_name, current_version, latest_version))
-                logger.info(f"{display_name} 已是最新版本")
+                logger.info(f"已是最新版本 ({current_version})")
             else:
                 # 无法比较版本（格式不同等）
                 if current_version != latest_version:
                     # 版本号字符串不同，可能是有更新
                     updated_mods.append((display_name, current_version, latest_version, latest_info))
-                    logger.info(f"{display_name} 版本号不同（无法比较）")
-                    logger.info(f"当前: {current_version} -> 最新: {latest_version}")
+                    logger.info(f"版本号不同（无法比较） {current_version} -> {latest_version}")
                 else:
                     no_update_mods.append((display_name, current_version, latest_version))
-                    logger.info(f"{display_name} 版本号相同: {current_version}")
+                    logger.info(f"已是最新版本 ({current_version})")
     
     logger.info("=" * 50)
     logger.info(f"检查完成: 发现 {len(updated_mods)} 个更新")
@@ -934,6 +954,221 @@ def update_ini_config():
     logger.info(f"  删除: 成功 {removed_count} 个, 失败 {failed_remove_count} 个")
 
 
+def open_directories():
+    """打开游戏目录和配置目录"""
+    logger.info("打开目录功能\n")
+    
+    # 初始化路径检测器
+    path_detector = PathDetector()
+    paths = path_detector.get_all_paths()
+    
+    print("请选择要打开的目录:")
+    print("1. 打开游戏目录")
+    print("2. 打开配置目录")
+    print("0. 返回")
+    
+    choice = input("\n请选择: ").strip()
+    print("")
+    
+    if choice == '1':
+        game_path = paths.get('game_path')
+        if not game_path:
+            logger.error("未找到游戏路径，请检查 configs/config.json 配置")
+            return
+        
+        if not os.path.exists(game_path):
+            logger.error(f"游戏目录不存在: {game_path}")
+            return
+        
+        try:
+            os.startfile(game_path)
+            logger.info(f"已打开游戏目录: {game_path}")
+        except Exception as e:
+            logger.error(f"打开游戏目录失败: {e}")
+    
+    elif choice == '2':
+        config_dir = paths.get('config_dir')
+        if not config_dir:
+            logger.error("未找到配置目录")
+            return
+        
+        if not os.path.exists(config_dir):
+            logger.error(f"配置目录不存在: {config_dir}")
+            return
+        
+        try:
+            os.startfile(config_dir)
+            logger.info(f"已打开配置目录: {config_dir}")
+        except Exception as e:
+            logger.error(f"打开配置目录失败: {e}")
+    
+    elif choice == '0':
+        return
+    else:
+        logger.warning("无效的选择")
+
+
+def remove_mod():
+    """删除 Mod"""
+    logger.info("准备删除 Mod...\n")
+    
+    # 初始化 Mod 注册表
+    mod_registry = ModRegistry()
+    
+    # 获取所有 mod（按 order 排序）
+    sorted_mods = mod_registry.get_mods_by_order(enabled_only=False)
+    
+    if not sorted_mods:
+        logger.info("当前没有已注册的 Mod\n")
+        return
+    
+    # 显示所有 mod 列表
+    logger.info("已注册的 Mod 列表:")
+    logger.info("=" * 50)
+    mod_list = []
+    for idx, (mod_name, mod_info) in enumerate(sorted_mods, 1):
+        display_name = mod_registry.get_display_name(mod_name)
+        status = "✓ 已启用" if mod_info.get('enabled', False) else "✗ 未启用"
+        version = mod_info.get('version', '未知')
+        logger.info(f"{idx}. {display_name} ({status}, 版本: {version})")
+        mod_list.append((mod_name, mod_info))
+    
+    logger.info("=" * 50)
+    
+    # 用户输入要删除的序号（空格隔开）
+    print("\n请输入要删除的 Mod 序号（空格隔开，例如: 1 3 5）:")
+    print("按 Enter 取消")
+    user_input = input("> ").strip()
+    print("")
+    
+    if not user_input:
+        logger.info("已取消删除操作")
+        return
+    
+    # 解析序号
+    try:
+        indices = [int(x.strip()) for x in user_input.split()]
+    except ValueError:
+        logger.error("输入格式错误，请输入数字序号，空格隔开")
+        return
+    
+    # 验证序号范围
+    if not indices or any(idx < 1 or idx > len(mod_list) for idx in indices):
+        logger.error(f"序号无效，请输入 1-{len(mod_list)} 之间的数字")
+        return
+    
+    # 获取要删除的 mod
+    mods_to_remove = [mod_list[idx - 1][0] for idx in indices]
+    display_names = [mod_registry.get_display_name(mod_name) for mod_name in mods_to_remove]
+    
+    # 显示将要删除的 mod
+    logger.info("\n将要删除以下 Mod:")
+    logger.info("=" * 50)
+    for display_name in display_names:
+        logger.info(f"  - {display_name}")
+    logger.info("=" * 50)
+    
+    # 确认删除
+    print("\n确认删除? (y/N): ", end='')
+    confirm = input().strip().lower()
+    print("")
+    
+    if confirm != 'y':
+        logger.info("已取消删除操作")
+        return
+    
+    # 初始化路径检测器和 INI 管理器
+    path_detector = PathDetector()
+    paths = path_detector.get_all_paths()
+    
+    config = load_config()
+    ini_mode = config.get('ini_mode', 'sResourceArchive2List')
+    backup_retention = config.get('ini_backup_retention', 5)
+    
+    ini_manager = IniManager(paths['config_dir'], backup_retention=backup_retention) if paths.get('config_dir') else None
+    
+    # 获取脚本目录
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    mods_dir = os.path.join(script_dir, 'mods')
+    backups_dir = os.path.join(script_dir, 'backups')
+    data_path = paths.get('data_path')
+    
+    # 开始删除
+    logger.info("\n开始删除 Mod...")
+    logger.info("=" * 50)
+    
+    success_count = 0
+    failed_count = 0
+    
+    for mod_name in mods_to_remove:
+        # 在删除之前获取所有需要的信息
+        display_name = mod_registry.get_display_name(mod_name)
+        mod_info = mod_registry.get_mod_info(mod_name)
+        
+        try:
+            # 1. 从 INI 配置中删除
+            if ini_manager:
+                if ini_manager.remove_mod_from_list(mod_name, ini_mode):
+                    logger.info(f"✓ 已从 INI 配置中删除: {display_name}")
+                else:
+                    logger.warning(f"⚠ 从 INI 配置中删除失败: {display_name}")
+            
+            # 2. 从注册表中删除（在删除之前已经获取了所有需要的信息）
+            if mod_registry.unregister_mod(mod_name):
+                logger.info(f"✓ 已从注册表中删除: {display_name}")
+            else:
+                logger.warning(f"⚠ 从注册表中删除失败: {display_name}")
+            
+            # 3. 删除 mods 目录下的文件夹
+            # 从 source_file 提取 mod 文件夹名（去掉扩展名）
+            source_file = mod_info.get('source_file') if mod_info else None
+            if source_file:
+                mod_folder_name = os.path.splitext(source_file)[0]
+                mod_folder_path = os.path.join(mods_dir, mod_folder_name)
+                
+                if os.path.exists(mod_folder_path) and os.path.isdir(mod_folder_path):
+                    try:
+                        import shutil
+                        shutil.rmtree(mod_folder_path)
+                        logger.info(f"✓ 已删除 mods 文件夹: {mod_folder_name}")
+                    except Exception as e:
+                        logger.warning(f"⚠ 删除 mods 文件夹失败: {e}")
+            
+            # 4. 删除 Data 目录中的 mod 文件
+            if data_path and mod_name:
+                mod_file_path = os.path.join(data_path, mod_name)
+                if os.path.exists(mod_file_path) and os.path.isfile(mod_file_path):
+                    try:
+                        os.remove(mod_file_path)
+                        logger.info(f"✓ 已删除 Data 目录中的文件: {mod_name}")
+                    except Exception as e:
+                        logger.warning(f"⚠ 删除 Data 目录中的文件失败: {e}")
+            
+            # 5. 清理备份文件夹
+            if mod_info:
+                # 使用 mod 文件名（去掉扩展名）作为备份文件夹名
+                backup_mod_name = os.path.splitext(mod_name)[0]
+                backup_mod_dir = os.path.join(backups_dir, backup_mod_name)
+                
+                if os.path.exists(backup_mod_dir) and os.path.isdir(backup_mod_dir):
+                    try:
+                        import shutil
+                        shutil.rmtree(backup_mod_dir)
+                        logger.info(f"✓ 已清理备份文件夹: {backup_mod_name}")
+                    except Exception as e:
+                        logger.warning(f"⚠ 清理备份文件夹失败: {e}")
+            
+            success_count += 1
+            logger.info(f"✓ 成功删除: {display_name}")
+            
+        except Exception as e:
+            failed_count += 1
+            logger.error(f"✗ 删除失败: {display_name} - {e}")
+    
+    logger.info("=" * 50)
+    logger.info(f"删除完成: 成功 {success_count} 个, 失败 {failed_count} 个\n")
+
+
 def main():
     """主函数"""
     try:
@@ -956,12 +1191,16 @@ def main():
                 reorder_mods()
             elif choice == '7':
                 update_ini_config()
+            elif choice == '8':
+                remove_mod()
+            elif choice == '9':
+                open_directories()
             elif choice == '0':
                 logger.info("再见!\n")
-                logger.info("用户退出程序")
+                logger.info("用户退出程序\n")
                 break
             else:
-                logger.warning("无效的选择，请输入 1-9\n")
+                logger.warning("无效的选择，请输入 0-9\n")
             
             # 等待用户按键继续
             if choice != '0':
