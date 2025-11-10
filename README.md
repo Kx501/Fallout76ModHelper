@@ -21,7 +21,7 @@
 - **文件排除规则**：类似 `.gitignore` 的排除机制，可在安装时自动过滤不需要的文件（如图片、文本文件等）
 - **自动备份**：安装 Mod 前自动备份配置文件（.ini、.json）
 - **特殊 Mod 支持**：支持特殊安装路径的 Mod（如 SFE）
-- **Mod 注册表**：记录 Mod 的版本、安装时间、来源等信息
+- **Mod 注册信息**：记录 Mod 的版本、安装时间、来源等信息
 - **安装方式选择**：支持直接移动（direct）或复制（copy）两种安装方式
 
 ## 安装要求
@@ -104,7 +104,7 @@ python main.py
 FalloutHelper/
 ├── main.py                 # 主程序入口
 ├── mod_installer.py        # Mod 安装模块
-├── mod_registry.py         # Mod 注册表管理
+├── mod_registry.py         # Mod 注册信息管理
 ├── ini_manager.py          # INI 配置文件管理
 ├── path_detector.py        # 路径自动检测
 ├── game_launcher.py        # 游戏启动器
@@ -112,7 +112,7 @@ FalloutHelper/
 ├── logger.py               # 日志模块
 ├── configs/                # 配置目录
 │   ├── config.json        # 主配置文件
-│   └── mods_registry.json # Mod 注册表
+│   └── mods_registry.json # Mod 注册信息
 ├── mods/                  # Mod 解压目录
 ├── backups/               # 备份目录
 └── logs/                  # 日志目录

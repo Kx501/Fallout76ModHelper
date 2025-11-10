@@ -493,7 +493,7 @@ class ModInstaller:
         Returns:
             实际使用的安装方式（"direct" 或 "copy"）
         """
-        # 优先级：用户选择 > 注册表中的install_method > default_install_method
+        # 优先级：用户选择 > 注册信息中的install_method > default_install_method
         if user_choice:
             return user_choice
         
@@ -771,13 +771,13 @@ class ModInstaller:
                         installed_mods.append(mod_file)
                         logger.info(f"添加 mod 到 INI: {mod_file}")
                         
-                        # 注册 mod 到注册表（记录版本号等信息），并标记为已启用
+                        # 注册 mod 到注册信息（记录版本号等信息），并标记为已启用
                         if self.mod_registry:
                             version = None  # 由 registry 自动检测
                             mod_info = self.mod_registry.register_mod(mod_file, archive_path, version, enabled=True)
-                            # 保存安装方式到注册表（使用本次安装确定的安装方式）
+                            # 保存安装方式到注册信息（使用本次安装确定的安装方式）
                             if mod_info:
-                                # 如果安装时确定了新的安装方式，更新注册表
+                                # 如果安装时确定了新的安装方式，更新注册信息
                                 # 注意：对于已存在的mod，register_mod会保留旧的install_method
                                 # 但这里我们要使用本次安装确定的install_method
                                 mod_info['install_method'] = install_method

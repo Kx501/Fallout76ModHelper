@@ -12,14 +12,14 @@ logger = get_logger()
 
 
 class ModRegistry:
-    """Mod 注册表管理器"""
+    """Mod 注册信息管理器"""
     
     def __init__(self, registry_path='mods_registry.json'):
         """
-        初始化 Mod 注册表
+        初始化 Mod 注册信息
         
         Args:
-            registry_path: 注册表文件路径（相对路径，会自动放入 configs/ 文件夹）
+            registry_path: 注册信息文件路径（相对路径，会自动放入 configs/ 文件夹）
         """
         # 获取脚本所在目录
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -28,7 +28,7 @@ class ModRegistry:
         # 确保 configs 目录存在
         os.makedirs(config_dir, exist_ok=True)
         
-        # 构建完整注册表文件路径
+        # 构建完整注册信息文件路径
         if os.path.isabs(registry_path):
             self.registry_path = registry_path
         else:
@@ -37,22 +37,22 @@ class ModRegistry:
         self._load_registry()
     
     def _load_registry(self):
-        """加载注册表"""
+        """加载注册信息"""
         try:
             if os.path.exists(self.registry_path):
                 with open(self.registry_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     self.mods = data.get('mods', {})
-                logger.debug(f"加载 Mod 注册表: {len(self.mods)} 个 mod")
+                logger.debug(f"加载 Mod 注册信息: {len(self.mods)} 个 mod")
             else:
                 self.mods = {}
-                logger.debug("创建新的 Mod 注册表")
+                logger.debug("创建新的 Mod 注册信息")
         except Exception as e:
-            logger.warning(f"加载 Mod 注册表失败: {e}")
+            logger.warning(f"加载 Mod 注册信息失败: {e}")
             self.mods = {}
     
     def _save_registry(self):
-        """保存注册表"""
+        """保存注册信息"""
         try:
             os.makedirs(os.path.dirname(self.registry_path), exist_ok=True)
             data = {
@@ -61,10 +61,10 @@ class ModRegistry:
             }
             with open(self.registry_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
-            logger.debug(f"保存 Mod 注册表: {len(self.mods)} 个 mod")
+            logger.debug(f"保存 Mod 注册信息: {len(self.mods)} 个 mod")
             return True
         except Exception as e:
-            logger.error(f"保存 Mod 注册表失败: {e}")
+            logger.error(f"保存 Mod 注册信息失败: {e}")
             return False
     
     def _extract_nexus_info_from_filename(self, filename):
@@ -419,7 +419,7 @@ class ModRegistry:
         # 使用 mod 文件名作为 key
         self.mods[mod_filename] = mod_info
         
-        # 保存注册表
+        # 保存注册信息
         self._save_registry()
         
         logger.info(f"注册 mod: {mod_filename} (版本: {version or '未知'}, 启用: {enabled})")
@@ -451,7 +451,7 @@ class ModRegistry:
     
     def unregister_mod(self, mod_filename):
         """
-        从注册表中删除 mod
+        从注册信息中删除 mod
         
         Args:
             mod_filename: mod 文件名
@@ -462,7 +462,7 @@ class ModRegistry:
         if mod_filename in self.mods:
             del self.mods[mod_filename]
             self._save_registry()
-            logger.debug(f"从注册表删除 mod: {mod_filename}")
+            logger.debug(f"从注册信息删除 mod: {mod_filename}")
             return True
         return False
     
@@ -477,7 +477,7 @@ class ModRegistry:
     
     def check_missing_mods(self, ini_mod_list):
         """
-        检查注册表中已启用的 mod 是否在 INI 列表中
+        检查注册信息中已启用的 mod 是否在 INI 列表中
         
         Args:
             ini_mod_list: INI 文件中的 mod 列表
@@ -601,7 +601,7 @@ class ModRegistry:
             (是否成功, 提示信息)
         """
         if mod_filename not in self.mods:
-            return False, f"Mod {mod_filename} 不存在于注册表中"
+            return False, f"Mod {mod_filename} 不存在于注册信息中"
         
         if method not in [None, "direct", "copy"]:
             return False, "安装方式必须是 'direct'、'copy' 或 None"

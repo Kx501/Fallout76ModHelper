@@ -14,7 +14,6 @@ from nexus_api import NexusAPI
 
 logger = get_logger()
 
-# TODO: 添加删除 mod、清理功能
 # TODO: 使用按键选择的菜单
 
 def load_config():
@@ -167,7 +166,7 @@ def install_mods():
     backup_extensions = config.get('backup_extensions', ['.json', '.ini'])
     backup_retention = config.get('ini_backup_retention', 5)
     
-    # 初始化 Mod 注册表
+    # 初始化 Mod 注册信息
     mod_registry = ModRegistry()
     
     # 初始化 INI 管理器
@@ -211,7 +210,7 @@ def install_mods():
     # 安装方式选择
     default_method = config.get('default_install_method', 'direct')
     logger.info(f"默认安装方式: {default_method} (direct=直接移动, copy=复制)\n")
-    logger.info("提示: 可在 Mod 注册表中手动修改安装方式，修改将在下次安装时生效")
+    logger.info("提示: 可在 Mod 注册信息中手动修改安装方式，修改将在下次安装时生效")
     print("\n是否手动选择安装方式? (y/N): ", end='')
     print("")
     manual_choice = input().strip().lower()
@@ -233,6 +232,8 @@ def install_mods():
             elif choice == '2':
                 user_choices[archive_name] = 'copy'
             # 如果选择为空或其他值，使用默认（不添加到user_choices中）
+    else:
+        logger.info("使用默认安装方式")
     
     logger.info("=" * 50)
     result = installer.install_mods_from_folder(mod_folder, user_choices=user_choices, archive_files=archive_files)
@@ -244,15 +245,15 @@ def install_mods():
     
     if result['mods']:
         logger.info(f"已添加到 INI 配置的 Mod 文件:")
-        for mod_file in result['mods']:
-            logger.info(f"  - {mod_file}")
+        for idx, mod_file in enumerate(result['mods'], 1):
+            logger.info(f"  {idx}. {mod_file}")
 
 
 def view_mod_list():
     """查看 Mod 列表（包括启用和未启用的）"""
     logger.info("查询 Mod 列表...\n")
     
-    # 初始化 Mod 注册表
+    # 初始化 Mod 注册信息
     mod_registry = ModRegistry()
     
     # 获取所有 mod（按 order 排序）
@@ -374,10 +375,10 @@ def view_mod_list():
             failed_count = 0
             
             for mod_name in missing_mods:
-                # 检查 mod 是否在注册表中
+                # 检查 mod 是否在注册信息中
                 mod_info = mod_registry.get_mod_info(mod_name)
                 if not mod_info:
-                    logger.warning(f"{mod_name} 不在注册表中，跳过")
+                    logger.warning(f"{mod_name} 不在注册信息中，跳过")
                     failed_count += 1
                     continue
                 
@@ -418,7 +419,7 @@ def check_mod_updates():
         logger.error(f"初始化 Nexus API 失败: {e}")
         return
     
-    # 初始化 Mod 注册表
+    # 初始化 Mod 注册信息
     mod_registry = ModRegistry()
     
     # 获取所有已启用的 mod（或所有有 nexus_mod_id 的 mod）
@@ -524,7 +525,7 @@ def check_mod_updates():
 
 
 def detect_mod_info():
-    """检测 Mod 信息并更新注册表"""
+    """检测 Mod 信息并更新注册信息"""
     logger.info("开始检测 Mod 信息...\n")
     
     # 获取脚本目录下的 mods/ 文件夹
@@ -535,7 +536,7 @@ def detect_mod_info():
         logger.error("mods/ 目录不存在")
         return
     
-    # 初始化 Mod 注册表
+    # 初始化 Mod 注册信息
     mod_registry = ModRegistry()
     
     # 获取 mods/ 目录下的所有子文件夹
@@ -606,7 +607,7 @@ def detect_mod_info():
                     for part in update_parts:
                         logger.info(f"  {part}")
             else:
-                # 新发现的 mod（不在注册表中）
+                # 新发现的 mod（不在注册信息中）
                 # 如果有版本号或 Mod ID 信息，注册它
                 # 注意：这里传入 None 而不是 folder_path，因为 register_mod 期望压缩包文件路径
                 # 而 detect_mod_info 处理的是已解压的文件夹，版本和 mod_id 已从文件夹名中提取
@@ -643,7 +644,7 @@ def reorder_mods():
     ini_mode = config.get('ini_mode', 'sResourceArchive2List')
     backup_retention = config.get('ini_backup_retention', 5)
     
-    # 初始化 Mod 注册表和 INI 管理器
+    # 初始化 Mod 注册信息和 INI 管理器
     mod_registry = ModRegistry()
     ini_manager = IniManager(paths['config_dir'], backup_retention=backup_retention)
     
@@ -818,7 +819,7 @@ def reorder_mods():
     new_order = current_order + other_mods
     
     if ini_manager.reorder_mod_list(ini_mode, new_order):
-        # 更新注册表中所有已启用 mod 的 order 值
+        # 更新注册信息中所有已启用 mod 的 order 值
         # order 值基于它们在 new_order 中的位置
         updated_count = 0
         for idx, mod_name in enumerate(new_order, 1):
@@ -850,7 +851,7 @@ def update_ini_config():
     ini_mode = config.get('ini_mode', 'sResourceArchive2List')
     backup_retention = config.get('ini_backup_retention', 5)
     
-    # 初始化 Mod 注册表和 INI 管理器
+    # 初始化 Mod 注册信息和 INI 管理器
     mod_registry = ModRegistry()
     ini_manager = IniManager(paths['config_dir'], backup_retention=backup_retention)
     
@@ -864,7 +865,7 @@ def update_ini_config():
     missing_mods = [mod for mod in enabled_mods if mod not in current_ini_mods]
     
     # 找出需要删除的 mod（在 INI 中但未启用）
-    # 只处理注册表中存在的 mod，忽略注册表中不存在的 mod（可能是手动添加的）
+    # 只处理注册信息中存在的 mod，忽略注册信息中不存在的 mod（可能是手动添加的）
     disabled_mods = []
     for mod_name in current_ini_mods:
         mod_info = mod_registry.get_mod_info(mod_name)
@@ -916,10 +917,10 @@ def update_ini_config():
     if missing_mods:
         logger.info("添加缺失的已启用 Mod...")
         for mod_name in missing_mods:
-            # 检查 mod 是否在注册表中
+            # 检查 mod 是否在注册信息中
             mod_info = mod_registry.get_mod_info(mod_name)
             if not mod_info:
-                logger.warning(f"{mod_name} 不在注册表中，跳过")
+                logger.warning(f"{mod_name} 不在注册信息中，跳过")
                 failed_add_count += 1
                 continue
             
@@ -1012,7 +1013,7 @@ def remove_mod():
     """删除 Mod"""
     logger.info("准备删除 Mod...\n")
     
-    # 初始化 Mod 注册表
+    # 初始化 Mod 注册信息
     mod_registry = ModRegistry()
     
     # 获取所有 mod（按 order 排序）
@@ -1094,7 +1095,7 @@ def remove_mod():
     data_path = paths.get('data_path')
     
     # 开始删除
-    logger.info("\n开始删除 Mod...")
+    logger.info("开始删除 Mod...")
     logger.info("=" * 50)
     
     success_count = 0
@@ -1109,15 +1110,15 @@ def remove_mod():
             # 1. 从 INI 配置中删除
             if ini_manager:
                 if ini_manager.remove_mod_from_list(mod_name, ini_mode):
-                    logger.info(f"✓ 已从 INI 配置中删除: {display_name}")
+                    logger.info(f"已从 INI 配置中删除: {display_name}")
                 else:
                     logger.warning(f"⚠ 从 INI 配置中删除失败: {display_name}")
             
-            # 2. 从注册表中删除（在删除之前已经获取了所有需要的信息）
+            # 2. 从注册信息中删除（在删除之前已经获取了所有需要的信息）
             if mod_registry.unregister_mod(mod_name):
-                logger.info(f"✓ 已从注册表中删除: {display_name}")
+                logger.info(f"已从注册信息中删除: {display_name}")
             else:
-                logger.warning(f"⚠ 从注册表中删除失败: {display_name}")
+                logger.warning(f"⚠ 从注册信息中删除失败: {display_name}")
             
             # 3. 删除 mods 目录下的文件夹
             # 从 source_file 提取 mod 文件夹名（去掉扩展名）
@@ -1130,7 +1131,7 @@ def remove_mod():
                     try:
                         import shutil
                         shutil.rmtree(mod_folder_path)
-                        logger.info(f"✓ 已删除 mods 文件夹: {mod_folder_name}")
+                        logger.info(f"已删除 mods 文件夹: {mod_folder_name}")
                     except Exception as e:
                         logger.warning(f"⚠ 删除 mods 文件夹失败: {e}")
             
@@ -1140,7 +1141,7 @@ def remove_mod():
                 if os.path.exists(mod_file_path) and os.path.isfile(mod_file_path):
                     try:
                         os.remove(mod_file_path)
-                        logger.info(f"✓ 已删除 Data 目录中的文件: {mod_name}")
+                        logger.info(f"已删除 Data 目录中的文件: {mod_name}")
                     except Exception as e:
                         logger.warning(f"⚠ 删除 Data 目录中的文件失败: {e}")
             
@@ -1154,12 +1155,12 @@ def remove_mod():
                     try:
                         import shutil
                         shutil.rmtree(backup_mod_dir)
-                        logger.info(f"✓ 已清理备份文件夹: {backup_mod_name}")
+                        logger.info(f"已清理备份文件夹: {backup_mod_name}")
                     except Exception as e:
                         logger.warning(f"⚠ 清理备份文件夹失败: {e}")
             
             success_count += 1
-            logger.info(f"✓ 成功删除: {display_name}")
+            logger.info(f"成功删除: {display_name}")
             
         except Exception as e:
             failed_count += 1
