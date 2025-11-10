@@ -1,4 +1,4 @@
-# Fallout76 Mod 助手
+# Fallout76 Mod Helper
 
 一个用于管理 Fallout 76 Mod 的 Python 工具，提供 Mod 安装、更新检查、配置管理等功能。
 
