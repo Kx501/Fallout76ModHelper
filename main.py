@@ -148,6 +148,7 @@ def install_mods():
     if not mod_folder:
         print("\n请输入 Mod 文件夹路径（包含 ZIP 压缩包的文件夹）:")
         mod_folder = input("> ").strip().strip('"').strip("'")
+        print("")
         if not mod_folder:
             logger.error("路径不能为空")
             return

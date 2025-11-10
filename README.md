@@ -78,12 +78,40 @@ pip install -r requirements.txt
 
 被排除的文件仍会解压到 `mods/` 文件夹，但不会安装到游戏的 Data 目录。
 
+### Mod 注册信息文件
+
+程序会在 `configs/mods_registry.json` 中记录所有已安装 Mod 的详细信息：
+
+```json
+{
+  "mods": {
+    "HUDChallenges.ba2": {
+      "name": "HUDChallenges.ba2",              // Mod 文件名
+      "alias": null,                            // Mod 显示别名（可手动设置）
+      "version": "1.2.4",                       // Mod 版本号
+      "nexus_mod_id": "2860",                   // Nexus Mods 的 Mod ID（用于检查更新）
+      "enabled": true,                          // 是否已启用（在 INI 配置中）
+      "order": 1,                               // Mod 加载顺序（数字越小越先加载）
+      "install_method": "copy",                 // 安装方式：direct/copy
+      "source_file": "HUDChallenges-2860-1-2-4-1761234069.zip",  // 原始压缩包文件名
+      "install_date": "2025-11-01T14:14:09.972557"  // 安装时间（ISO 格式）
+    }
+  }
+}
+```
+
 ## 使用方法
 
 ### 启动程序
 
 ```bash
 python main.py
+```
+
+或运行
+
+```bash
+main.exe
 ```
 
 ### 菜单选项
@@ -128,6 +156,17 @@ FalloutHelper/
 ## 许可证
 
 本项目仅供学习和个人使用。
+
+## 致谢
+
+本项目使用了以下优秀的工具和库：
+
+- **[Nuitka](https://nuitka.net/)**
+- **[UnRAR](https://www.rarlab.com/rar_add.htm)**
+- **[py7zr](https://github.com/miurahr/py7zr)**
+- **[rarfile](https://github.com/markokr/rarfile)**
+
+感谢这些项目的开发者和贡献者！
 
 ## 贡献
 

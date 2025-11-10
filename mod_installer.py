@@ -313,7 +313,18 @@ class ModInstaller:
         Returns:
             unrar 可执行文件路径，如果未找到返回 None
         """
-        # 首先检查 PATH 中是否有 unrar
+        # 首先检查程序目录（脚本/exe所在目录）- 优先查找打包的文件
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        bundled_unrar_paths = [
+            os.path.join(script_dir, 'unrar.exe'),
+            os.path.join(script_dir, 'UnRAR.exe'),
+        ]
+        for bundled_path in bundled_unrar_paths:
+            if os.path.exists(bundled_path) and os.path.isfile(bundled_path):
+                logger.debug(f"找到打包的 unrar 工具: {bundled_path}")
+                return bundled_path
+        
+        # 然后检查 PATH 中是否有 unrar
         unrar_path = shutil.which('unrar')
         if unrar_path:
             return unrar_path
