@@ -1,4 +1,4 @@
-# Fallout76 Mod 助手
+# Fallout76 Mod Helper
 
 一个用于管理 Fallout 76 Mod 的 Python 工具，提供 Mod 安装、更新检查、配置管理等功能。
 
@@ -25,6 +25,8 @@
 - **安装方式选择**：支持直接移动（direct）或复制（copy）两种安装方式
 
 ## 安装要求
+
+直接运行 Fallout76ModHelper.exe 或使用 Python
 
 ### Python 版本
 
@@ -111,7 +113,7 @@ python main.py
 或运行
 
 ```bash
-main.exe
+Fallout76ModHelper.exe
 ```
 
 ### 菜单选项
