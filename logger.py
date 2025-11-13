@@ -4,6 +4,8 @@
 import logging
 import os
 from datetime import datetime
+from rich.logging import RichHandler
+from rich.console import Console
 
 
 class Logger:
@@ -43,10 +45,15 @@ class Logger:
             file_handler.setFormatter(file_format)
             self.logger.addHandler(file_handler)
             
-            # 控制台处理器
-            console_handler = logging.StreamHandler()
+            # 控制台处理器 - 使用 RichHandler 美化输出
+            console_handler = RichHandler(
+                console=Console(stderr=True),
+                show_time=False,
+                show_path=False,
+                rich_tracebacks=True
+            )
             console_handler.setLevel(logging.INFO)
-            console_format = logging.Formatter('%(levelname)s - %(message)s')
+            console_format = logging.Formatter('%(message)s')
             console_handler.setFormatter(console_format)
             self.logger.addHandler(console_handler)
     

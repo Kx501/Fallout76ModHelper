@@ -11,10 +11,11 @@ from mod_installer import ModInstaller
 from game_launcher import GameLauncher
 from mod_registry import ModRegistry
 from nexus_api import NexusAPI
+from rich.console import Console
+from rich.prompt import Prompt
 
 logger = get_logger()
-
-# TODO: 使用按键选择的菜单
+console = Console()
 
 def load_config():
     """加载配置文件，如果不存在则创建默认配置"""
@@ -70,20 +71,20 @@ def load_config():
 
 def display_menu():
     """显示主菜单"""
-    print("\n" + "=" * 50)
-    print("Fallout76 Mod 助手")
-    print("=" * 50)
-    print("1. 启动游戏")
-    print("2. 安装 Mod")
-    print("3. 查看 Mod 列表")
-    print("4. 检查 Mod 更新")
-    print("5. 更新 Mod 信息")
-    print("6. 更新 Mod 排序")
-    print("7. 更新 Fallout76Custom.ini")
-    print("8. 删除 Mod")
-    print("9. 打开目录")
-    print("0. 退出")
-    print("=" * 50)
+    console.print("\n" + "=" * 50)
+    console.print("[bold cyan]Fallout76 Mod 助手[/bold cyan]")
+    console.print("=" * 50)
+    console.print("1. 启动游戏")
+    console.print("2. 安装 Mod")
+    console.print("3. 查看 Mod 列表")
+    console.print("4. 检查 Mod 更新")
+    console.print("5. 更新 Mod 信息")
+    console.print("6. 更新 Mod 排序")
+    console.print("7. 更新 Fallout76Custom.ini")
+    console.print("8. 删除 Mod")
+    console.print("9. 打开目录")
+    console.print("0. 退出")
+    console.print("=" * 50)
 
 
 def launch_game():
@@ -146,9 +147,9 @@ def install_mods():
             logger.warning(f"配置的默认 Mod 目录不存在: {expanded_path}")
     
     if not mod_folder:
-        print("\n请输入 Mod 文件夹路径（包含 ZIP 压缩包的文件夹）:")
+        console.print("\n请输入 Mod 文件夹路径（包含 ZIP 压缩包的文件夹）:")
         mod_folder = input("> ").strip().strip('"').strip("'")
-        print("")
+        console.print("")
         if not mod_folder:
             logger.error("路径不能为空")
             return
@@ -212,8 +213,8 @@ def install_mods():
     default_method = config.get('default_install_method', 'direct')
     logger.info(f"默认安装方式: {default_method} (direct=直接移动, copy=复制)\n")
     logger.info("提示: 可在 Mod 注册信息中手动修改安装方式，修改将在下次安装时生效")
-    print("\n是否手动选择安装方式? (y/N): ", end='')
-    print("")
+    console.print("\n是否手动选择安装方式? (y/N): ", end='')
+    console.print("")
     manual_choice = input().strip().lower()
     
     user_choices = {}
@@ -222,10 +223,10 @@ def install_mods():
         logger.info("开始逐个选择安装方式...")
         for archive_name in archive_names:
             display_name = mod_registry.extract_mod_name_from_filename(archive_name) if mod_registry else archive_name
-            print(f"\n[{display_name}] 的安装方式:")
-            print("  1. 移动文件 (direct)")
-            print("  2. 复制文件 (copy)")
-            print(f"  默认: {default_method} (按 Enter)")
+            console.print(f"\n[{display_name}] 的安装方式:")
+            console.print("  1. 移动文件 (direct)")
+            console.print("  2. 复制文件 (copy)")
+            console.print(f"  默认: {default_method} (按 Enter)")
             choice = input("\n请选择: ").strip()
             
             if choice == '1':
@@ -342,12 +343,12 @@ def view_mod_list():
         enabled_display_names = [mod_registry.get_display_name(mod_name) for mod_name in enabled_mods]
         logger.info(f"已启用 ({enabled_count}):")
         logger.info(f"{', '.join(enabled_display_names)}")
-        print("")
+        console.print("")
     if disabled_mods:
         disabled_display_names = [mod_registry.get_display_name(mod_name) for mod_name in disabled_mods]
         logger.info(f"未启用 ({disabled_count}):")
         logger.info(f"{', '.join(disabled_display_names)}")
-        print("")
+        console.print("")
     
     # 检查是否有丢失的配置
     if current_ini_mods:
@@ -362,7 +363,7 @@ def view_mod_list():
                 logger.info(f"{idx}. {display_name} (版本: {version})")
             logger.info("=" * 50)
             
-            print("\n是否恢复这些 Mod 的配置? (Y/n): ", end='')
+            console.print("\n是否恢复这些 Mod 的配置? (Y/n): ", end='')
             restore = input().strip()
             
             if restore and restore.lower() != 'y':
@@ -727,15 +728,15 @@ def reorder_mods():
     display_mod_list()
     
     # 显示操作提示（vim 风格）
-    print("\n操作说明:")
-    print("  - 输入 \"源序号 目标序号\" 来移动 Mod（例如: 1 6 表示将第1个移动到第6个之前）")
-    print("  - 输入 \":w\" 或 \":wq\" 保存并退出")
-    print("  - 输入 \":q\" 或 \":q!\" 取消并退出")
+    console.print("\n操作说明:")
+    console.print("  - 输入 \"源序号 目标序号\" 来移动 Mod（例如: 1 6 表示将第1个移动到第6个之前）")
+    console.print("  - 输入 \":w\" 或 \":wq\" 保存并退出")
+    console.print("  - 输入 \":q\" 或 \":q!\" 取消并退出")
     
     # 直接操作循环（完全按照 vim）
     while True:
         user_input = input("\n请输入操作> ").strip()
-        print("")
+        console.print("")
         
         if not user_input:
             continue
@@ -801,7 +802,7 @@ def reorder_mods():
             logger.warning("无效的输入，请输入 \"源序号 目标序号\"、\":w\" 保存或 \":q\" 退出")
     
     # 确认保存
-    print("\n是否保存排序结果? (Y/n): ", end='')
+    console.print("\n是否保存排序结果? (Y/n): ", end='')
     save_confirm = input().strip()
     
     if save_confirm and save_confirm.lower() != 'y':
@@ -899,8 +900,8 @@ def update_ini_config():
     
     logger.info("=" * 50)
     
-    print("\n是否执行更新? (Y/n): ", end='')
-    print("")
+    console.print("\n是否执行更新? (Y/n): ", end='')
+    console.print("")
     confirm = input().strip()
     
     if confirm and confirm.lower() != 'y':
@@ -967,13 +968,13 @@ def open_directories():
     path_detector = PathDetector()
     paths = path_detector.get_all_paths()
     
-    print("请选择要打开的目录:")
-    print("1. 打开游戏目录")
-    print("2. 打开配置目录")
-    print("0. 返回")
+    console.print("请选择要打开的目录:")
+    console.print("1. 打开游戏目录")
+    console.print("2. 打开配置目录")
+    console.print("0. 返回")
     
-    choice = input("\n请选择: ").strip()
-    print("")
+    choice = Prompt.ask("\n请选择", choices=["0", "1", "2"], default="0")
+    console.print("")
     
     if choice == '1':
         game_path = paths.get('game_path')
@@ -1041,10 +1042,10 @@ def remove_mod():
     logger.info("=" * 50)
     
     # 用户输入要删除的序号（空格隔开）
-    print("\n请输入要删除的 Mod 序号（空格隔开，例如: 1 3 5）:")
-    print("按 Enter 取消")
+    console.print("\n请输入要删除的 Mod 序号（空格隔开，例如: 1 3 5）:")
+    console.print("按 Enter 取消")
     user_input = input("> ").strip()
-    print("")
+    console.print("")
     
     if not user_input:
         logger.info("已取消删除操作")
@@ -1074,9 +1075,9 @@ def remove_mod():
     logger.info("=" * 50)
     
     # 确认删除
-    print("\n确认删除? (y/N): ", end='')
+    console.print("\n确认删除? (y/N): ", end='')
     confirm = input().strip().lower()
-    print("")
+    console.print("")
     
     if confirm != 'y':
         logger.info("已取消删除操作")
@@ -1179,8 +1180,8 @@ def main():
     try:
         while True:
             display_menu()
-            choice = input("\n请选择操作 (1-9): ").strip()
-            print("")
+            choice = Prompt.ask("\n请选择操作", choices=["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"], default="0")
+            console.print("")
             
             if choice == '1':
                 launch_game()
