@@ -33,7 +33,7 @@ def load_config():
             "launch_url": "steam://rungameid/1151340",
             "mod_archive_directory": None,
             "ini_mode": "sResourceArchive2List",
-            "ini_backup_retention": 5,
+            "ini_backup_retention": 0,
             "backup_extensions": [".json", ".ini"],
             "nexus_api": {
                 "api_key": ""
@@ -165,7 +165,7 @@ def install_mods():
     
     # 获取其他配置（已在上面加载过，这里直接使用）
     backup_extensions = config.get('backup_extensions', ['.json', '.ini'])
-    backup_retention = config.get('ini_backup_retention', 5)
+    backup_retention = config.get('ini_backup_retention', 0)
     
     # 初始化 Mod 注册信息
     mod_registry = ModRegistry()
@@ -289,7 +289,7 @@ def view_mod_list():
     logger.info("=" * 50)
     
     if paths['config_dir']:
-        backup_retention = config.get('ini_backup_retention', 5)
+        backup_retention = config.get('ini_backup_retention', 0)
         ini_manager = IniManager(paths['config_dir'], backup_retention=backup_retention)
         current_ini_mods = ini_manager.get_mod_list(ini_mode)
     else:
@@ -375,22 +375,23 @@ def view_mod_list():
             restored_count = 0
             failed_count = 0
             
-            for mod_name in missing_mods:
-                # 检查 mod 是否在注册信息中
-                mod_info = mod_registry.get_mod_info(mod_name)
-                if not mod_info:
-                    logger.warning(f"{mod_name} 不在注册信息中，跳过")
-                    failed_count += 1
-                    continue
-                
-                # 添加 mod 到 INI 配置
-                if ini_manager.add_mod_to_list(mod_name, ini_mode):
-                    mod_registry.mark_mod_enabled(mod_name)
-                    restored_count += 1
-                    logger.info(f"成功恢复 {mod_name} 的配置")
-                else:
-                    logger.error(f"恢复 {mod_name} 的配置失败")
-                    failed_count += 1
+            with ini_manager:
+                for mod_name in missing_mods:
+                    # 检查 mod 是否在注册信息中
+                    mod_info = mod_registry.get_mod_info(mod_name)
+                    if not mod_info:
+                        logger.warning(f"{mod_name} 不在注册信息中，跳过")
+                        failed_count += 1
+                        continue
+                    
+                    # 添加 mod 到 INI 配置
+                    if ini_manager.add_mod_to_list(mod_name, ini_mode):
+                        mod_registry.mark_mod_enabled(mod_name)
+                        restored_count += 1
+                        logger.info(f"成功恢复 {mod_name} 的配置")
+                    else:
+                        logger.error(f"恢复 {mod_name} 的配置失败")
+                        failed_count += 1
             
             logger.info("=" * 50)
             logger.info(f"恢复完成: 成功 {restored_count} 个, 失败 {failed_count} 个\n")
@@ -517,7 +518,7 @@ def check_mod_updates():
             if mod_url:
                 logger.info(f"|__{mod_url}")
     else:
-        logger.info(f"✓ 所有 Mod 都已是最新版本\n")
+        logger.info(f"所有 Mod 都已是最新版本\n")
     
     if error_mods:
         logger.warning(f"{len(error_mods)} 个 Mod 检查失败:")
@@ -643,7 +644,7 @@ def reorder_mods():
     # 加载配置
     config = load_config()
     ini_mode = config.get('ini_mode', 'sResourceArchive2List')
-    backup_retention = config.get('ini_backup_retention', 5)
+    backup_retention = config.get('ini_backup_retention', 0)
     
     # 初始化 Mod 注册信息和 INI 管理器
     mod_registry = ModRegistry()
@@ -850,7 +851,7 @@ def update_ini_config():
     # 加载配置
     config = load_config()
     ini_mode = config.get('ini_mode', 'sResourceArchive2List')
-    backup_retention = config.get('ini_backup_retention', 5)
+    backup_retention = config.get('ini_backup_retention', 0)
     
     # 初始化 Mod 注册信息和 INI 管理器
     mod_registry = ModRegistry()
@@ -914,41 +915,43 @@ def update_ini_config():
     failed_add_count = 0
     failed_remove_count = 0
     
-    # 添加缺失的已启用 mod
-    if missing_mods:
-        logger.info("添加缺失的已启用 Mod...")
-        for mod_name in missing_mods:
-            # 检查 mod 是否在注册信息中
-            mod_info = mod_registry.get_mod_info(mod_name)
-            if not mod_info:
-                logger.warning(f"{mod_name} 不在注册信息中，跳过")
-                failed_add_count += 1
-                continue
-            
-            # 添加 mod 到 INI 配置
-            if ini_manager.add_mod_to_list(mod_name, ini_mode):
-                mod_registry.mark_mod_enabled(mod_name)
-                added_count += 1
-                display_name = mod_registry.get_display_name(mod_name)
-                logger.info(f"✓ 已添加: {display_name}")
-            else:
-                failed_add_count += 1
-                display_name = mod_registry.get_display_name(mod_name)
-                logger.error(f"✗ 添加失败: {display_name}")
-    
-    # 删除未启用的 mod
-    if disabled_mods:
-        logger.info("删除未启用的 Mod...")
-        for mod_name in disabled_mods:
-            # 从 INI 中移除 mod
-            if ini_manager.remove_mod_from_list(mod_name, ini_mode):
-                removed_count += 1
-                display_name = mod_registry.get_display_name(mod_name)
-                logger.info(f"✓ 已删除: {display_name}")
-            else:
-                failed_remove_count += 1
-                display_name = mod_registry.get_display_name(mod_name)
-                logger.error(f"✗ 删除失败: {display_name}")
+    # 添加缺失的已启用 mod 和删除未启用的 mod（批量操作）
+    with ini_manager:
+        # 添加缺失的已启用 mod
+        if missing_mods:
+            logger.info("添加缺失的已启用 Mod...")
+            for mod_name in missing_mods:
+                # 检查 mod 是否在注册信息中
+                mod_info = mod_registry.get_mod_info(mod_name)
+                if not mod_info:
+                    logger.warning(f"{mod_name} 不在注册信息中，跳过")
+                    failed_add_count += 1
+                    continue
+                
+                # 添加 mod 到 INI 配置
+                if ini_manager.add_mod_to_list(mod_name, ini_mode):
+                    mod_registry.mark_mod_enabled(mod_name)
+                    added_count += 1
+                    display_name = mod_registry.get_display_name(mod_name)
+                    logger.info(f"已添加: {display_name}")
+                else:
+                    failed_add_count += 1
+                    display_name = mod_registry.get_display_name(mod_name)
+                    logger.error(f"添加失败: {display_name}")
+        
+        # 删除未启用的 mod
+        if disabled_mods:
+            logger.info("删除未启用的 Mod...")
+            for mod_name in disabled_mods:
+                # 从 INI 中移除 mod
+                if ini_manager.remove_mod_from_list(mod_name, ini_mode):
+                    removed_count += 1
+                    display_name = mod_registry.get_display_name(mod_name)
+                    logger.info(f"已删除: {display_name}")
+                else:
+                    failed_remove_count += 1
+                    display_name = mod_registry.get_display_name(mod_name)
+                    logger.error(f"删除失败: {display_name}")
     
     logger.info("=" * 50)
     logger.info(f"更新完成:")
@@ -1085,7 +1088,7 @@ def remove_mod():
     
     config = load_config()
     ini_mode = config.get('ini_mode', 'sResourceArchive2List')
-    backup_retention = config.get('ini_backup_retention', 5)
+    backup_retention = config.get('ini_backup_retention', 0)
     
     ini_manager = IniManager(paths['config_dir'], backup_retention=backup_retention) if paths.get('config_dir') else None
     

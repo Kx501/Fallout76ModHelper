@@ -2,6 +2,8 @@
 INI 配置管理模块 - 管理 Fallout76Custom.ini 文件
 """
 import os
+import sys
+import atexit
 import configparser
 import shutil
 import glob
@@ -14,13 +16,13 @@ logger = get_logger()
 class IniManager:
     """INI 文件管理器"""
     
-    def __init__(self, config_dir, backup_retention=5):
+    def __init__(self, config_dir, backup_retention=0):
         """
         初始化 INI 管理器
         
         Args:
             config_dir: 配置目录路径（Documents\My Games\Fallout 76）
-            backup_retention: 保留的备份数量（默认5个）
+            backup_retention: 保留的备份数量（默认0表示无限制）
         """
         self.config_dir = config_dir
         self.ini_path = os.path.join(config_dir, 'Fallout76Custom.ini')
@@ -33,6 +35,14 @@ class IniManager:
         os.makedirs(self.backup_dir, exist_ok=True)
         
         self.backup_retention = backup_retention
+        
+        # 批量操作模式相关属性
+        self._batch_mode = False
+        self._pending_changes = False
+        self._backup_done = False
+        
+        # 注册退出时的清理函数
+        atexit.register(self._cleanup_on_exit)
     
     def _ensure_ini_exists(self):
         """确保 INI 文件存在，不存在则创建"""
@@ -93,7 +103,10 @@ class IniManager:
             return None
     
     def _cleanup_old_backups(self):
-        """清理旧的备份文件，只保留最近的 N 个"""
+        """清理旧的备份文件，只保留最近的 N 个（0表示无限制）"""
+        if self.backup_retention == 0:
+            return
+        
         try:
             # 获取所有备份文件
             backup_pattern = os.path.join(self.backup_dir, 'Fallout76Custom_*.ini')
@@ -117,11 +130,44 @@ class IniManager:
         except Exception as e:
             logger.warning(f"清理旧备份失败: {e}")
     
-    def _write_ini(self):
-        """写入 INI 文件（写入前会先备份）"""
-        # 写入前先备份
-        if os.path.exists(self.ini_path):
-            self._backup_ini()
+    def _cleanup_on_exit(self):
+        """程序退出时的清理函数（包括异常退出）"""
+        if self._pending_changes:
+            try:
+                # 如果还在批量模式，说明程序异常退出
+                if self._batch_mode:
+                    self._write_ini(backup=not self._backup_done)
+                # 重置状态
+                self._batch_mode = False
+                self._pending_changes = False
+            except Exception:
+                pass  # 静默失败，避免影响退出
+    
+    def __enter__(self):
+        """进入批量操作模式"""
+        if not self._read_ini():
+            raise RuntimeError("无法读取 INI 文件")
+        self._batch_mode = True
+        self._pending_changes = False
+        self._backup_done = False
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """退出批量操作模式时自动写入（如果有更改）"""
+        if self._pending_changes:
+            self._write_ini(backup=not self._backup_done)
+        self._batch_mode = False
+        self._pending_changes = False
+        self._backup_done = False
+        return False  # 不抑制异常
+    
+    def _write_ini(self, backup=True):
+        """写入 INI 文件（写入前可选择是否备份）"""
+        # 写入前先备份（如果需要）
+        if backup and not self._backup_done:
+            if os.path.exists(self.ini_path):
+                self._backup_ini()
+                self._backup_done = True
         
         try:
             with open(self.ini_path, 'w', encoding='utf-8') as f:
@@ -132,20 +178,17 @@ class IniManager:
             logger.error(f"写入 INI 文件失败: {e}")
             return False
     
-    def add_mod_to_list(self, mod_name, list_type='sResourceArchive2List'):
+    def _do_add_mod(self, mod_name, list_type='sResourceArchive2List'):
         """
-        添加 mod 到指定列表
+        内部方法：执行添加 mod 的逻辑（不写入文件）
         
         Args:
-            mod_name: mod 文件名（如 "ModName.ba2"）
-            list_type: 列表类型（sResourceArchive2List 或 sResourceIndexFileList）
+            mod_name: mod 文件名
+            list_type: 列表类型
         
         Returns:
-            是否成功添加
+            是否成功添加（True 表示已添加或已存在）
         """
-        if not self._read_ini():
-            return False
-        
         # 确保 [Archive] 节存在
         if not self.parser.has_section('Archive'):
             self.parser.add_section('Archive')
@@ -166,28 +209,50 @@ class IniManager:
             new_value = mod_name
         
         self.parser.set('Archive', list_type, new_value)
+        return True
+    
+    def add_mod_to_list(self, mod_name, list_type='sResourceArchive2List'):
+        """
+        添加 mod 到指定列表
         
-        if self._write_ini():
-            logger.info(f"成功添加 mod {mod_name} 到 {list_type}")
-            return True
+        Args:
+            mod_name: mod 文件名（如 "ModName.ba2"）
+            list_type: 列表类型（sResourceArchive2List 或 sResourceIndexFileList）
+        
+        Returns:
+            是否成功添加
+        """
+        if not self._batch_mode:
+            # 单独操作模式：立即读取和写入
+            if not self._read_ini():
+                return False
+            # 执行修改
+            if self._do_add_mod(mod_name, list_type):
+                if self._write_ini():
+                    logger.info(f"成功添加 mod {mod_name} 到 {list_type}")
+                    return True
+                else:
+                    logger.error(f"添加 mod {mod_name} 到 {list_type} 失败")
+                    return False
+            return False
         else:
-            logger.error(f"添加 mod {mod_name} 到 {list_type} 失败")
+            # 批量操作模式：只修改内存
+            if self._do_add_mod(mod_name, list_type):
+                self._pending_changes = True
+                return True
             return False
     
-    def remove_mod_from_list(self, mod_name, list_type='sResourceArchive2List'):
+    def _do_remove_mod(self, mod_name, list_type='sResourceArchive2List'):
         """
-        从列表中移除 mod
+        内部方法：执行移除 mod 的逻辑（不写入文件）
         
         Args:
             mod_name: mod 文件名
             list_type: 列表类型
         
         Returns:
-            是否成功移除
+            是否成功移除（True 表示已移除或不存在）
         """
-        if not self._read_ini():
-            return False
-        
         if not self.parser.has_section('Archive'):
             return True
         
@@ -208,12 +273,38 @@ class IniManager:
         else:
             self.parser.remove_option('Archive', list_type)
         
-        if self._write_ini():
-            logger.info(f"成功从 {list_type} 移除 mod {mod_name}")
+        return True
+    
+    def remove_mod_from_list(self, mod_name, list_type='sResourceArchive2List'):
+        """
+        从列表中移除 mod
+        
+        Args:
+            mod_name: mod 文件名
+            list_type: 列表类型
+        
+        Returns:
+            是否成功移除
+        """
+        if not self._batch_mode:
+            # 单独操作模式：立即读取和写入
+            if not self._read_ini():
+                return False
+            # 执行修改
+            if self._do_remove_mod(mod_name, list_type):
+                if self._write_ini():
+                    logger.info(f"成功从 {list_type} 移除 mod {mod_name}")
+                    return True
+                else:
+                    logger.error(f"从 {list_type} 移除 mod {mod_name} 失败")
+                    return False
             return True
         else:
-            logger.error(f"从 {list_type} 移除 mod {mod_name} 失败")
-            return False
+            # 批量操作模式：只修改内存
+            if self._do_remove_mod(mod_name, list_type):
+                self._pending_changes = True
+                return True
+            return True
     
     def get_mod_list(self, list_type='sResourceArchive2List'):
         """

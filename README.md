@@ -6,7 +6,7 @@
 
 ### 核心功能
 
-- **安装 Mod**：支持批量安装 ZIP、7Z、RAR 格式的 Mod 压缩包
+- **安装 Mod**：支持批量安装 ZIP、7Z、RAR 格式的 Mod 压缩包 **（会自动删除）**
 - **查看 Mod 列表**：显示所有已注册的 Mod，包括启用/未启用状态、版本信息等
 - **检查 Mod 更新**：通过 Nexus Mods API 检查已安装 Mod 的更新（需要配置 API Key）
 - **更新 Mod 信息**：自动检测并更新 Mod 的版本号和 Nexus Mod ID

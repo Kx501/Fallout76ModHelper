@@ -61,12 +61,12 @@ class ModInstaller:
             config_path = os.path.join(script_dir, 'configs', 'config.json')
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
-            self.backup_retention = config.get('ini_backup_retention', 5)
+            self.backup_retention = config.get('ini_backup_retention', 0)
             self.default_install_method = config.get('default_install_method', 'direct')
             self.special_mod_install_paths = config.get('special_mod_install_paths', {})
             self.exclude_patterns = config.get('exclude_patterns', [])
         except:
-            self.backup_retention = 5
+            self.backup_retention = 0
             self.default_install_method = 'direct'
             self.special_mod_install_paths = {}
             self.exclude_patterns = []
@@ -152,13 +152,16 @@ class ModInstaller:
     
     def _cleanup_mod_backups(self, mod_backup_dir):
         """
-        清理 mod 备份文件夹中的旧备份，只保留最近的 N 个
+        清理 mod 备份文件夹中的旧备份，只保留最近的 N 个（0表示无限制）
         
         Args:
             mod_backup_dir: Mod 备份文件夹路径
         """
         try:
             if not os.path.exists(mod_backup_dir):
+                return
+            
+            if self.backup_retention == 0:
                 return
             
             # 获取文件夹内所有备份文件
@@ -697,11 +700,12 @@ class ModInstaller:
                 
                 if restore == 'y':
                     restored_count = 0
-                    for mod_name in missing_mods:
-                        if self.ini_manager.add_mod_to_list(mod_name, ini_mode):
-                            self.mod_registry.mark_mod_enabled(mod_name)
-                            restored_count += 1
-                            logger.info(f"已恢复 mod 配置: {mod_name}")
+                    with self.ini_manager:
+                        for mod_name in missing_mods:
+                            if self.ini_manager.add_mod_to_list(mod_name, ini_mode):
+                                self.mod_registry.mark_mod_enabled(mod_name)
+                                restored_count += 1
+                                logger.info(f"已恢复 mod 配置: {mod_name}")
                     
                     if restored_count > 0:
                         print(f"已恢复 {restored_count} 个 mod 的配置")
@@ -777,22 +781,23 @@ class ModInstaller:
                     logger.warning(f"没有文件被安装到目标目录: {archive_name}")
                 
                 # 添加 mod 文件到 INI（只处理.ba2/.esm/.esp文件）
-                for mod_file in mod_files:
-                    if self.ini_manager.add_mod_to_list(mod_file, ini_mode):
-                        installed_mods.append(mod_file)
-                        logger.info(f"添加 mod 到 INI: {mod_file}")
-                        
-                        # 注册 mod 到注册信息（记录版本号等信息），并标记为已启用
-                        if self.mod_registry:
-                            version = None  # 由 registry 自动检测
-                            mod_info = self.mod_registry.register_mod(mod_file, archive_path, version, enabled=True)
-                            # 保存安装方式到注册信息（使用本次安装确定的安装方式）
-                            if mod_info:
-                                # 如果安装时确定了新的安装方式，更新注册信息
-                                # 注意：对于已存在的mod，register_mod会保留旧的install_method
-                                # 但这里我们要使用本次安装确定的install_method
-                                mod_info['install_method'] = install_method
-                                self.mod_registry._save_registry()
+                with self.ini_manager:
+                    for mod_file in mod_files:
+                        if self.ini_manager.add_mod_to_list(mod_file, ini_mode):
+                            installed_mods.append(mod_file)
+                            logger.info(f"添加 mod 到 INI: {mod_file}")
+                            
+                            # 注册 mod 到注册信息（记录版本号等信息），并标记为已启用
+                            if self.mod_registry:
+                                version = None  # 由 registry 自动检测
+                                mod_info = self.mod_registry.register_mod(mod_file, archive_path, version, enabled=True)
+                                # 保存安装方式到注册信息（使用本次安装确定的安装方式）
+                                if mod_info:
+                                    # 如果安装时确定了新的安装方式，更新注册信息
+                                    # 注意：对于已存在的mod，register_mod会保留旧的install_method
+                                    # 但这里我们要使用本次安装确定的install_method
+                                    mod_info['install_method'] = install_method
+                                    self.mod_registry._save_registry()
                 
                 # 删除原压缩包
                 try:
