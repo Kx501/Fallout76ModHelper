@@ -1,0 +1,109 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        
+      - name: 设置 Python 环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install nuitka
+          pip install -r requirements.txt
+          
+      - name: 提取版本号
+        id: version
+        run: |
+          $tag = "${{ github.ref_name }}"
+          # 移除 v 前缀
+          $version = $tag -replace '^v', ''
+          # 转换为 Windows 版本格式 (1.0.0 -> 1.0.0.0)
+          $parts = $version -split '\.'
+          if ($parts.Length -eq 3) {
+            $version = "$($parts[0]).$($parts[1]).$($parts[2]).0"
+          }
+          echo "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "提取的版本号: $version"
+          
+      - name: 清理旧的构建文件
+        run: |
+          if (Test-Path "main.build") { Remove-Item -Recurse -Force "main.build" }
+          if (Test-Path "main.dist") { Remove-Item -Recurse -Force "main.dist" }
+          if (Test-Path "build") { Remove-Item -Recurse -Force "build" }
+          
+      - name: 使用 Nuitka 编译
+        run: |
+          python -m nuitka `
+            --standalone `
+            --windows-console-mode=force `
+            --windows-icon-from-ico=icon.ico `
+            --windows-company-name="Fallout76 Mod Helper" `
+            --windows-product-name="Fallout76 Mod Helper" `
+            --windows-file-version="$env:VERSION" `
+            --windows-product-version="$env:VERSION" `
+            --windows-file-description="Fallout 76 Mod Manager" `
+            --copyright="Copyright (c) 2025. Licensed under MIT License." `
+            --output-filename=Fallout76ModHelper.exe `
+            --include-data-files=UnRAR.exe=UnRAR.exe `
+            --include-data-files=README.md=README.md `
+            --show-progress `
+            --show-memory `
+            --assume-yes-for-downloads `
+            --output-dir=build `
+            main.py
+            
+      - name: 验证构建产物
+        run: |
+          if (-not (Test-Path "build\main.dist\Fallout76ModHelper.exe")) {
+            Write-Error "构建失败：未找到 Fallout76ModHelper.exe"
+            exit 1
+          }
+          Write-Host "构建成功！"
+          
+      - name: 打包构建产物
+        id: package
+        run: |
+          $zipName = "Fallout76ModHelper-${{ github.ref_name }}.zip"
+          Compress-Archive -Path "build\main.dist\*" -DestinationPath $zipName -Force
+          echo "zip_name=$zipName" >> $env:GITHUB_OUTPUT
+          Write-Host "已创建压缩包: $zipName"
+          
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ steps.package.outputs.zip_name }}
+          name: ${{ github.ref_name }}
+          body: |
+            ## Fallout76 Mod Helper ${{ github.ref_name }}
+            
+            ### 构建信息
+            - 版本: ${{ steps.version.outputs.version }}
+            - 构建时间: ${{ github.event.head_commit.timestamp }}
+            - 提交: ${{ github.sha }}
+            
+            ### 安装说明
+            1. 下载并解压 `${{ steps.package.outputs.zip_name }}`
+            2. 运行 `Fallout76ModHelper.exe`
+            3. 首次运行会在程序目录创建 `configs\` 文件夹
+            
+            ### 包含文件
+            - Fallout76ModHelper.exe (主程序)
+            - UnRAR.exe (RAR解压工具)
+            - README.md (说明文档)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
