@@ -12,7 +12,6 @@ from game_launcher import GameLauncher
 from mod_registry import ModRegistry
 from nexus_api import NexusAPI
 from rich.console import Console
-from rich.prompt import Prompt
 
 logger = get_logger()
 console = Console()
@@ -83,7 +82,6 @@ def display_menu():
     console.print("7. 更新 Fallout76Custom.ini")
     console.print("8. 删除 Mod")
     console.print("9. 打开目录")
-    console.print("0. 退出")
     console.print("=" * 50)
 
 
@@ -148,10 +146,11 @@ def install_mods():
     
     if not mod_folder:
         console.print("\n请输入 Mod 文件夹路径（包含 ZIP 压缩包的文件夹）:")
+        console.print("按 Enter 取消")
         mod_folder = input("> ").strip().strip('"').strip("'")
         console.print("")
         if not mod_folder:
-            logger.error("路径不能为空")
+            logger.info("已取消操作")
             return
         # 展开环境变量
         mod_folder = os.path.expandvars(mod_folder)
@@ -214,8 +213,8 @@ def install_mods():
     logger.info(f"默认安装方式: {default_method} (direct=直接移动, copy=复制)\n")
     logger.info("提示: 可在 Mod 注册信息中手动修改安装方式，修改将在下次安装时生效")
     console.print("\n是否手动选择安装方式? (y/N): ", end='')
-    console.print("")
     manual_choice = input().strip().lower()
+    console.print("")
     
     user_choices = {}
     if manual_choice == 'y':
@@ -226,13 +225,18 @@ def install_mods():
             console.print(f"\n[{display_name}] 的安装方式:")
             console.print("  1. 移动文件 (direct)")
             console.print("  2. 复制文件 (copy)")
+            console.print("  0. 跳过此 Mod")
             console.print(f"  默认: {default_method} (按 Enter)")
-            choice = input("\n请选择: ").strip()
+            choice = input("\n请选择 (1-2, 0跳过, Enter默认): ").strip()
+            console.print("")
             
             if choice == '1':
                 user_choices[archive_name] = 'direct'
             elif choice == '2':
                 user_choices[archive_name] = 'copy'
+            elif choice == '0':
+                # 跳过此 Mod，不添加到 user_choices
+                continue
             # 如果选择为空或其他值，使用默认（不添加到user_choices中）
     else:
         logger.info("使用默认安装方式")
@@ -363,10 +367,10 @@ def view_mod_list():
                 logger.info(f"{idx}. {display_name} (版本: {version})")
             logger.info("=" * 50)
             
-            console.print("\n是否恢复这些 Mod 的配置? (Y/n): ", end='')
-            restore = input().strip()
+            restore = input("\n是否恢复这些 Mod 的配置? (Y/n): ").strip().lower()
+            console.print("")
             
-            if restore and restore.lower() != 'y':
+            if restore and restore != 'y':
                 logger.info("已取消恢复操作\n")
                 return
             
@@ -802,10 +806,10 @@ def reorder_mods():
             logger.warning("无效的输入，请输入 \"源序号 目标序号\"、\":w\" 保存或 \":q\" 退出")
     
     # 确认保存
-    console.print("\n是否保存排序结果? (Y/n): ", end='')
-    save_confirm = input().strip()
+    save_confirm = input("\n是否保存排序结果? (Y/n): ").strip().lower()
+    console.print("")
     
-    if save_confirm and save_confirm.lower() != 'y':
+    if save_confirm and save_confirm != 'y':
         logger.info("已取消保存")
         logger.info("=" * 50)
         return
@@ -900,11 +904,10 @@ def update_ini_config():
     
     logger.info("=" * 50)
     
-    console.print("\n是否执行更新? (Y/n): ", end='')
+    confirm = input("\n是否执行更新? (Y/n): ").strip().lower()
     console.print("")
-    confirm = input().strip()
     
-    if confirm and confirm.lower() != 'y':
+    if confirm and confirm != 'y':
         logger.info("已取消更新操作")
         return
     
@@ -971,12 +974,15 @@ def open_directories():
     console.print("请选择要打开的目录:")
     console.print("1. 打开游戏目录")
     console.print("2. 打开配置目录")
-    console.print("0. 返回")
+    console.print("按 Enter 取消")
     
-    choice = Prompt.ask("\n请选择", choices=["0", "1", "2"], default="0")
+    choice = input("\n请选择 (1-2): ").strip()
     console.print("")
     
-    if choice == '1':
+    if not choice:
+        logger.info("已取消操作")
+        return
+    elif choice == '1':
         game_path = paths.get('game_path')
         if not game_path:
             logger.error("未找到游戏路径，请检查 configs/config.json 配置")
@@ -1007,9 +1013,6 @@ def open_directories():
             logger.info(f"已打开配置目录: {config_dir}")
         except Exception as e:
             logger.error(f"打开配置目录失败: {e}")
-    
-    elif choice == '0':
-        return
     else:
         logger.warning("无效的选择")
 
@@ -1075,8 +1078,7 @@ def remove_mod():
     logger.info("=" * 50)
     
     # 确认删除
-    console.print("\n确认删除? (y/N): ", end='')
-    confirm = input().strip().lower()
+    confirm = input("\n确认删除? (y/N): ").strip().lower()
     console.print("")
     
     if confirm != 'y':
@@ -1180,10 +1182,14 @@ def main():
     try:
         while True:
             display_menu()
-            choice = Prompt.ask("\n请选择操作", choices=["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"], default="0")
+            choice = input("\n请选择操作 (1-9)，按 Enter 退出: ").strip()
             console.print("")
             
-            if choice == '1':
+            if not choice:
+                logger.info("再见!\n")
+                logger.info("用户退出程序\n")
+                break
+            elif choice == '1':
                 launch_game()
             elif choice == '2':
                 install_mods()
@@ -1201,15 +1207,11 @@ def main():
                 remove_mod()
             elif choice == '9':
                 open_directories()
-            elif choice == '0':
-                logger.info("再见!\n")
-                logger.info("用户退出程序\n")
-                break
             else:
-                logger.warning("无效的选择，请输入 0-9\n")
+                logger.warning("无效的选择，请输入 1-9\n")
             
             # 等待用户按键继续
-            if choice != '0':
+            if choice:
                 input("\n按 Enter 键继续...\n\n")
     
     except KeyboardInterrupt:
