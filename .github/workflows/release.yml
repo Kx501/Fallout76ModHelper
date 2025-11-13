@@ -17,7 +17,27 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
           
+      - name: 缓存 Nuitka 下载的工具
+        uses: actions/cache@v4
+        with:
+          path: |
+            $env:LOCALAPPDATA\Nuitka
+            $env:USERPROFILE\.cache\nuitka
+          key: ${{ runner.os }}-nuitka-tools-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-nuitka-tools-
+            
+      - name: 缓存 Nuitka 构建目录
+        uses: actions/cache@v4
+        id: cache-build
+        with:
+          path: build/main.build
+          key: ${{ runner.os }}-nuitka-build-${{ hashFiles('**/*.py', 'requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-nuitka-build-
+            
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
@@ -41,9 +61,10 @@ jobs:
           
       - name: 清理旧的构建文件
         run: |
-          if (Test-Path "main.build") { Remove-Item -Recurse -Force "main.build" }
+          # 只清理输出目录，保留 build/main.build 用于增量编译
           if (Test-Path "main.dist") { Remove-Item -Recurse -Force "main.dist" }
-          if (Test-Path "build") { Remove-Item -Recurse -Force "build" }
+          if (Test-Path "build\main.dist") { Remove-Item -Recurse -Force "build\main.dist" }
+          # 注意：不删除 build 目录，因为 build/main.build 需要保留用于增量编译
           
       - name: 使用 Nuitka 编译
         run: |
@@ -73,6 +94,7 @@ jobs:
             exit 1
           }
           Write-Host "构建成功！"
+          # 注意：main.build 会在工作流结束时自动保存到缓存
           
       - name: 打包构建产物
         id: package
